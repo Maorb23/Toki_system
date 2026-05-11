@@ -1,0 +1,75 @@
+{% extends "comms/base.html" %}
+{% block content %}
+<section class="page-title">
+  <div>
+    <p class="eyebrow">Employee mode</p>
+    <h1>{{ employee.name }}</h1>
+    <p>{{ employee.role }}{% if employee.team %} &middot; {{ employee.team.name }}{% endif %}</p>
+  </div>
+  <a class="button primary" href="{% url 'comms:employee_workspace' %}">Compose Message</a>
+</section>
+
+<section class="grid two">
+  <div class="card">
+    <h2>Your receiver profile</h2>
+    <dl>
+      <dt>Manager</dt><dd>{% if employee.manager %}{{ employee.manager.name }}{% else %}None{% endif %}</dd>
+      <dt>Seniority</dt><dd>{{ employee.seniority_level }}</dd>
+      <dt>Preferences</dt><dd><pre>{{ employee.communication_preferences }}</pre></dd>
+      <dt>Pain points</dt><dd><pre>{{ employee.pain_points }}</pre></dd>
+    </dl>
+    <a class="button" href="{% url 'comms:employee_detail' employee.id %}">Edit Profile</a>
+  </div>
+
+  <div class="card">
+    <h2>Recent feedback about you</h2>
+    {% if feedback %}
+      <ul class="clean-list">
+        {% for item in feedback %}
+          <li>
+            <strong>{{ item.created_at }}</strong><br>
+            {{ item.prompt_update_summary }}<br>
+            <small>{{ item.free_text }}</small>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No receiver feedback yet.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="grid two">
+  <div class="card">
+    <h2>Messages you sent</h2>
+    {% if sent_messages %}
+      <ul class="clean-list">
+        {% for message in sent_messages %}
+          <li>
+            <a href="{% url 'comms:message_detail' message.id %}">To {{ message.receiver.name }}</a><br>
+            <small>{{ message.get_channel_display }} &middot; {{ message.get_intent_display }} &middot; {{ message.created_at }}</small>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No sent messages yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Messages sent to you</h2>
+    {% if received_messages %}
+      <ul class="clean-list">
+        {% for message in received_messages %}
+          <li>
+            <a href="{% url 'comms:message_detail' message.id %}">From {{ message.sender.name }}</a><br>
+            <small>{{ message.get_channel_display }} &middot; {{ message.get_intent_display }} &middot; {{ message.created_at }}</small>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No received messages yet.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

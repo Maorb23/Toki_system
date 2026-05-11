@@ -54,6 +54,29 @@ class ScoreEngineTests(TestCase):
         self.message.refresh_from_db()
         self.assertEqual(self.message.final_text, self.message.overall_suggested_message)
 
+    def test_partial_word_suggestion_expands_to_word_boundaries(self):
+        message = Message.objects.create(
+            organization=self.sender.organization,
+            sender=self.sender,
+            receiver=self.receiver,
+            channel=Message.Channel.SLACK,
+            intent=Message.Intent.REQUEST,
+            original_text="Ship before launch.",
+            scores_before={"clarity": 50, "tone": 50, "receiver_fit": 50, "org_values_alignment": 50},
+            current_scores={"clarity": 50, "tone": 50, "receiver_fit": 50, "org_values_alignment": 50},
+        )
+        suggestion = InlineSuggestion.objects.create(
+            message=message,
+            target_text="for",
+            start_index=7,
+            end_index=10,
+            suggested_replacement="after",
+            affected_scores={"clarity": 5},
+        )
+        set_suggestion_decision(suggestion, InlineSuggestion.Decision.ACCEPTED)
+        message.refresh_from_db()
+        self.assertEqual(message.final_text, "Ship after launch.")
+
 class MessageSuggestionViewTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -123,6 +146,43 @@ class MessageSuggestionViewTests(TestCase):
         body = response.json()
         self.assertEqual(body["final_text"], self.message.overall_suggested_message)
         self.assertEqual(body["current_scores"]["clarity"], 55)
+
+class ModeSplitTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.org = Organization.objects.create(name="Northstar Labs")
+        team = Team.objects.create(organization=self.org, name="Customer Success")
+        self.rina = Employee.objects.create(
+            organization=self.org,
+            team=team,
+            name="Rina Tal",
+            role="Customer Success Manager",
+        )
+        self.dana = Employee.objects.create(
+            organization=self.org,
+            team=team,
+            name="Dana Weiss",
+            role="Engineering Lead",
+        )
+
+    def test_root_shows_mode_select(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Admin / Org View")
+        self.assertContains(response, "Continue as")
+        self.assertContains(response, "Rina Tal")
+
+    def test_employee_sign_in_locks_employee_mode(self):
+        response = self.client.get(f"/employee/sign-in/{self.rina.id}/")
+        self.assertRedirects(response, "/employee/")
+        response = self.client.get("/employee/")
+        self.assertContains(response, "Employee mode")
+        self.assertContains(response, "Rina Tal")
+
+    def test_org_dashboard_moved_to_org_path(self):
+        response = self.client.get("/org/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Northstar Labs")
 
 class FeedbackProcessorTests(TestCase):
     def test_receiver_feedback_appends_prompt_learning(self):

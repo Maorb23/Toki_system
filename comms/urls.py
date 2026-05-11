@@ -5,10 +5,15 @@ from . import api
 app_name = "comms"
 
 urlpatterns = [
-    path("", views.dashboard, name="dashboard"),
+    path("", views.mode_select, name="mode_select"),
+    path("org/", views.dashboard, name="dashboard"),
     path("org-graph/", views.org_graph, name="org_graph"),
     path("employees/<int:employee_id>/", views.employee_detail, name="employee_detail"),
     path("workspace/", views.workspace, name="workspace"),
+    path("employee/", views.employee_home, name="employee_home"),
+    path("employee/sign-in/<int:employee_id>/", views.employee_sign_in, name="employee_sign_in"),
+    path("employee/sign-out/", views.employee_sign_out, name="employee_sign_out"),
+    path("employee/workspace/", views.employee_workspace, name="employee_workspace"),
     path("messages/<int:message_id>/", views.message_detail, name="message_detail"),
     path("messages/<int:message_id>/mark-sent/", views.mark_message_sent, name="mark_message_sent"),
     path("messages/<int:message_id>/receiver-feedback/", views.receiver_feedback, name="receiver_feedback"),

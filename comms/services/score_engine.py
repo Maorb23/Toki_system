@@ -91,7 +91,7 @@ def _safe_index_span(original_text: str, suggestion: InlineSuggestion) -> tuple[
     if original_text[start:end] != target:
         return None
 
-    return start, end
+    return _expand_to_word_boundaries(original_text, start, end)
 
 
 def _safe_target_text_span(original_text: str, suggestion: InlineSuggestion) -> tuple[int, int] | None:
@@ -112,7 +112,27 @@ def _safe_target_text_span(original_text: str, suggestion: InlineSuggestion) -> 
     if second >= 0:
         return None
 
-    return first, first + len(target)
+    return _expand_to_word_boundaries(original_text, first, first + len(target))
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == "_"
+
+
+def _is_boundary(text: str, index: int) -> bool:
+    if index < 0 or index >= len(text):
+        return True
+    return not _is_word_char(text[index])
+
+
+def _expand_to_word_boundaries(original_text: str, start: int, end: int) -> tuple[int, int]:
+    while start > 0 and not _is_boundary(original_text, start - 1):
+        start -= 1
+
+    while end < len(original_text) and not _is_boundary(original_text, end):
+        end += 1
+
+    return start, end
 
 
 def _collect_safe_replacements(

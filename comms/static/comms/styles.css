@@ -234,9 +234,10 @@ th, td {
   position: relative;
   background: #fff2ba;
   border-radius: 6px;
-  padding: 1px 3px;
   cursor: pointer;
   box-shadow: inset 0 -2px 0 rgba(0,0,0,0.08);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .inline-segment.accepted { background: #cdebdc; }

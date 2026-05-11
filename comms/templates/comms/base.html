@@ -9,11 +9,18 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="{% url 'comms:dashboard' %}">Receiver-Aware Comms</a>
+    <a class="brand" href="{% url 'comms:mode_select' %}">Receiver-Aware Comms</a>
     <nav>
-      <a href="{% url 'comms:dashboard' %}">Dashboard</a>
+      <a href="{% url 'comms:mode_select' %}">Mode</a>
+      <a href="{% url 'comms:dashboard' %}">Org View</a>
+      {% if current_employee %}
+        <a href="{% url 'comms:employee_home' %}">Employee Mode</a>
+        <a href="{% url 'comms:employee_workspace' %}">Compose</a>
+        <a href="{% url 'comms:employee_sign_out' %}">Exit {{ current_employee.name }}</a>
+      {% else %}
+        <a href="{% url 'comms:workspace' %}">Workspace</a>
+      {% endif %}
       <a href="{% url 'comms:org_graph' %}">Org Graph</a>
-      <a href="{% url 'comms:workspace' %}">Workspace</a>
       <a href="/admin/">Admin</a>
     </nav>
   </header>

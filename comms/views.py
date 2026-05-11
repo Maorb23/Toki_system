@@ -12,9 +12,53 @@ from comms.services.llm_client import NebiusConfigurationError, NebiusRuntimeErr
 from comms.services.message_analyzer import MessageAnalyzer, LLMResponseValidationError
 from comms.services.score_engine import set_suggestion_decision, recalculate_scores, apply_accepted_suggestions, sync_suggestion_decisions
 
+EMPLOYEE_MODE_PERSONAS = [
+    {"name": "Rina Tal", "role": "Customer Success Manager"},
+    {"name": "Dana Weiss", "role": "Engineering Lead"},
+    {"name": "Noam Bar", "role": "VP Product"},
+    {"name": "Ari Cohen", "role": "CEO"},
+]
+
 
 def _get_default_org() -> Organization | None:
     return Organization.objects.prefetch_related("values", "teams", "employees").first()
+
+def _get_current_employee(request: HttpRequest) -> Employee | None:
+    employee_id = request.session.get("employee_mode_employee_id")
+    if not employee_id:
+        return None
+    return Employee.objects.select_related("team", "manager", "organization").filter(pk=employee_id).first()
+
+def _persona_options(org: Organization | None) -> list[dict]:
+    if not org:
+        return []
+
+    employees = {
+        employee.name: employee
+        for employee in Employee.objects.filter(
+            organization=org,
+            name__in=[persona["name"] for persona in EMPLOYEE_MODE_PERSONAS],
+        ).select_related("team")
+    }
+    return [
+        {
+            "employee": employees.get(persona["name"]),
+            "name": persona["name"],
+            "role": persona["role"],
+        }
+        for persona in EMPLOYEE_MODE_PERSONAS
+    ]
+
+def mode_select(request: HttpRequest):
+    org = _get_default_org()
+    if not org:
+        return render(request, "comms/empty.html")
+
+    return render(request, "comms/mode_select.html", {
+        "org": org,
+        "personas": _persona_options(org),
+        "current_employee": _get_current_employee(request),
+    })
 
 def dashboard(request: HttpRequest):
     org = _get_default_org()
@@ -44,6 +88,36 @@ def dashboard(request: HttpRequest):
         "org": org,
         "recent_messages": messages_qs,
         "avg_scores": avg_scores,
+        "current_employee": _get_current_employee(request),
+    })
+
+def employee_sign_in(request: HttpRequest, employee_id: int):
+    org = _get_default_org()
+    employee = get_object_or_404(Employee, pk=employee_id, organization=org)
+    request.session["employee_mode_employee_id"] = employee.id
+    messages.success(request, f"Continuing as {employee.name}.")
+    return redirect("comms:employee_home")
+
+def employee_sign_out(request: HttpRequest):
+    request.session.pop("employee_mode_employee_id", None)
+    messages.success(request, "Employee mode ended.")
+    return redirect("comms:mode_select")
+
+def employee_home(request: HttpRequest):
+    employee = _get_current_employee(request)
+    if not employee:
+        messages.error(request, "Choose an employee to continue.")
+        return redirect("comms:mode_select")
+
+    sent_messages = Message.objects.filter(sender=employee).select_related("receiver").order_by("-created_at")[:8]
+    received_messages = Message.objects.filter(receiver=employee).select_related("sender").order_by("-created_at")[:8]
+    feedback = ReceiverFeedback.objects.filter(receiver=employee).order_by("-created_at")[:5]
+    return render(request, "comms/employee_home.html", {
+        "employee": employee,
+        "sent_messages": sent_messages,
+        "received_messages": received_messages,
+        "feedback": feedback,
+        "current_employee": employee,
     })
 
 def org_graph(request: HttpRequest):
@@ -56,6 +130,7 @@ def org_graph(request: HttpRequest):
     return render(request, "comms/org_graph.html", {
         "org": org,
         "teams": teams,
+        "current_employee": _get_current_employee(request),
         "employees_json": json.dumps([
             {
                 "id": e.id,
@@ -98,6 +173,7 @@ def employee_detail(request: HttpRequest, employee_id: int):
         "feedback": feedback,
         "sent_messages": sent_messages,
         "received_messages": received_messages,
+        "current_employee": _get_current_employee(request),
     })
 
 def workspace(request: HttpRequest):
@@ -106,9 +182,29 @@ def workspace(request: HttpRequest):
         return render(request, "comms/empty.html")
 
     employees = Employee.objects.filter(organization=org).select_related("team").order_by("team__name", "name")
+    return _workspace(request, org=org, employees=employees, sender=None, template="comms/workspace.html")
 
+def employee_workspace(request: HttpRequest):
+    org = _get_default_org()
+    employee = _get_current_employee(request)
+    if not org:
+        return render(request, "comms/empty.html")
+    if not employee:
+        messages.error(request, "Choose an employee to continue.")
+        return redirect("comms:mode_select")
+
+    employees = Employee.objects.filter(organization=org).exclude(pk=employee.pk).select_related("team").order_by("team__name", "name")
+    return _workspace(
+        request,
+        org=org,
+        employees=employees,
+        sender=employee,
+        template="comms/employee_workspace.html",
+    )
+
+def _workspace(request: HttpRequest, *, org: Organization, employees, sender: Employee | None, template: str):
     if request.method == "POST":
-        sender = get_object_or_404(Employee, pk=request.POST.get("sender_id"), organization=org)
+        selected_sender = sender or get_object_or_404(Employee, pk=request.POST.get("sender_id"), organization=org)
         receiver = get_object_or_404(Employee, pk=request.POST.get("receiver_id"), organization=org)
         channel = request.POST.get("channel")
         intent = request.POST.get("intent")
@@ -116,11 +212,11 @@ def workspace(request: HttpRequest):
 
         if not original_message:
             messages.error(request, "Draft message is required.")
-            return redirect("comms:workspace")
+            return redirect("comms:employee_workspace" if sender else "comms:workspace")
 
         try:
             message = MessageAnalyzer().analyze(
-                sender=sender,
+                sender=selected_sender,
                 receiver=receiver,
                 channel=channel,
                 intent=intent,
@@ -128,22 +224,26 @@ def workspace(request: HttpRequest):
             )
         except (NebiusConfigurationError, NebiusRuntimeError, LLMResponseValidationError, ValueError) as exc:
             messages.error(request, f"Message analysis failed: {exc}")
-            return render(request, "comms/workspace.html", {
+            return render(request, template, {
                 "org": org,
                 "employees": employees,
+                "sender": sender,
                 "channels": Message.Channel.choices,
                 "intents": Message.Intent.choices,
                 "analysis_error": str(exc),
                 "form_data": request.POST,
+                "current_employee": sender,
             })
 
         return redirect("comms:message_detail", message_id=message.id)
 
-    return render(request, "comms/workspace.html", {
+    return render(request, template, {
         "org": org,
         "employees": employees,
+        "sender": sender,
         "channels": Message.Channel.choices,
         "intents": Message.Intent.choices,
+        "current_employee": sender,
     })
 
 def message_detail(request: HttpRequest, message_id: int):
@@ -156,6 +256,7 @@ def message_detail(request: HttpRequest, message_id: int):
     return render(request, "comms/message_detail.html", {
         "message": message,
         "revisions": message.revisions.all(),
+        "current_employee": _get_current_employee(request),
         "suggestions_json": json.dumps([
             {
                 "id": s.id,
@@ -259,4 +360,5 @@ def receiver_feedback(request: HttpRequest, message_id: int):
 
     return render(request, "comms/receiver_feedback.html", {
         "message": message,
+        "current_employee": _get_current_employee(request),
     })

@@ -1,0 +1,41 @@
+{% extends "comms/base.html" %}
+{% block content %}
+<section class="hero mode-hero">
+  <div>
+    <p class="eyebrow">Choose mode</p>
+    <h1>{{ org.name }}</h1>
+    <p>Use the organization view for the full admin-style workspace, or continue as an employee for a focused sender experience.</p>
+  </div>
+  <a class="button primary" href="{% url 'comms:dashboard' %}">Open Org View</a>
+</section>
+
+<section class="grid two mode-grid">
+  <div class="card">
+    <h2>Admin / Org View</h2>
+    <p class="hint">Dashboard, org graph, all employees, and the unrestricted analysis workspace.</p>
+    <div class="actions">
+      <a class="button primary" href="{% url 'comms:dashboard' %}">Continue to Org View</a>
+      <a class="button" href="/admin/">Django Admin</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Continue as</h2>
+    <div class="persona-list">
+      {% for persona in personas %}
+        {% if persona.employee %}
+          <a class="persona-option" href="{% url 'comms:employee_sign_in' persona.employee.id %}">
+            <strong>{{ persona.name }}</strong>
+            <span>{{ persona.role }}</span>
+          </a>
+        {% else %}
+          <div class="persona-option disabled">
+            <strong>{{ persona.name }}</strong>
+            <span>{{ persona.role }} &middot; seed this employee first</span>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

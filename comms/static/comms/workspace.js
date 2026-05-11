@@ -38,14 +38,14 @@
       .filter((s) => s.decision === "pending")
       .map(resolveSuggestionSpan)
       .filter(Boolean)
-      .sort((a, b) => a.start_index - b.start_index || b.end_index - a.end_index);
+      .sort((a, b) => a.display_start - b.display_start || b.display_end - a.display_end);
 
     let html = "";
     let cursor = 0;
 
     for (const s of pending) {
-      const start = s.start_index;
-      const end = s.end_index;
+      const start = s.display_start;
+      const end = s.display_end;
 
       if (start < cursor) continue;
 
@@ -60,6 +60,7 @@
 
   function resolveSuggestionSpan(suggestion) {
     const target = suggestion.target_text || "";
+    if (!target) return null;
 
     let start = Number.isInteger(suggestion.start_index) ? suggestion.start_index : -1;
     let end = Number.isInteger(suggestion.end_index) ? suggestion.end_index : -1;
@@ -71,17 +72,54 @@
       currentDraftText.slice(start, end) === target;
 
     if (indexSpanValid) {
-      return { ...suggestion, start_index: start, end_index: end };
+      const display = expandToWordBoundaries(currentDraftText, start, end);
+      return { ...suggestion, start_index: start, end_index: end, ...display };
     }
 
-    const found = currentDraftText.indexOf(target);
+    const found = findWholeSpan(currentDraftText, target);
     if (found < 0) return null;
 
+    const display = expandToWordBoundaries(currentDraftText, found, found + target.length);
     return {
       ...suggestion,
       start_index: found,
       end_index: found + target.length,
+      ...display,
     };
+  }
+
+  function findWholeSpan(text, target) {
+    let cursor = 0;
+    while (cursor <= text.length) {
+      const found = text.indexOf(target, cursor);
+      if (found < 0) return -1;
+      const end = found + target.length;
+      if (isBoundary(text, found - 1) && isBoundary(text, end)) {
+        return found;
+      }
+      cursor = found + Math.max(target.length, 1);
+    }
+    return -1;
+  }
+
+  function expandToWordBoundaries(text, start, end) {
+    let displayStart = start;
+    let displayEnd = end;
+
+    while (displayStart > 0 && !isBoundary(text, displayStart - 1)) {
+      displayStart -= 1;
+    }
+
+    while (displayEnd < text.length && !isBoundary(text, displayEnd)) {
+      displayEnd += 1;
+    }
+
+    return { display_start: displayStart, display_end: displayEnd };
+  }
+
+  function isBoundary(text, index) {
+    if (index < 0 || index >= text.length) return true;
+    return !/[A-Za-z0-9_]/.test(text.charAt(index));
   }
 
   function showPopover(targetNode) {
