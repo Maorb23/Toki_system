@@ -1,0 +1,40 @@
+{% extends "comms/base.html" %}
+{% block content %}
+<section class="page-title">
+  <h1>Receiver Feedback</h1>
+  <p>{{ message.receiver.name }} gives feedback after receiving a message from {{ message.sender.name }}.</p>
+</section>
+
+<section class="grid two">
+  <div class="card">
+    <h2>Final message received</h2>
+    <pre class="message-text">{{ message.final_text }}</pre>
+  </div>
+
+  <div class="card">
+    <h2>Feedback</h2>
+    <form method="post">
+      {% csrf_token %}
+      <div class="checkbox-grid">
+        <label><input type="checkbox" name="clear"> Message was clear</label>
+        <label><input type="checkbox" name="too_direct"> Too direct</label>
+        <label><input type="checkbox" name="too_soft"> Too soft</label>
+        <label><input type="checkbox" name="too_long"> Too long</label>
+        <label><input type="checkbox" name="too_short"> Too short</label>
+        <label><input type="checkbox" name="missed_context"> Missed context</label>
+        <label><input type="checkbox" name="too_much_context"> Too much context</label>
+        <label><input type="checkbox" name="unclear_ask"> Unclear ask</label>
+        <label><input type="checkbox" name="unclear_ownership"> Unclear ownership</label>
+        <label><input type="checkbox" name="not_aligned_with_preferences"> Not aligned with my preferences</label>
+        <label><input type="checkbox" name="good_message"> Good message</label>
+      </div>
+
+      <label>Free-text feedback
+        <textarea name="free_text" rows="6" placeholder="What should the sender/system learn for future messages?"></textarea>
+      </label>
+
+      <button class="button primary">Save Receiver Feedback</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

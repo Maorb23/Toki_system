@@ -1,0 +1,293 @@
+from django.test import TestCase
+from comms.models import Organization, Team, Employee, Message, InlineSuggestion, ReceiverFeedback, MessageRevision
+from comms.services.score_engine import recalculate_scores, set_suggestion_decision, apply_accepted_suggestions
+from comms.services.feedback_processor import update_receiver_profile_from_feedback
+from comms.services.llm_client import NebiusLLMClient, NebiusConfigurationError
+from comms.services.message_analyzer import validate_analysis_response, LLMResponseValidationError
+from django.test import override_settings
+from django.core.management import call_command
+from django.test import Client
+from unittest.mock import patch
+import tempfile
+import json
+
+class ScoreEngineTests(TestCase):
+    def setUp(self):
+        org = Organization.objects.create(name="Test Org")
+        team = Team.objects.create(organization=org, name="Engineering")
+        self.sender = Employee.objects.create(organization=org, team=team, name="Sender", role="PM")
+        self.receiver = Employee.objects.create(organization=org, team=team, name="Receiver", role="Engineer")
+        self.message = Message.objects.create(
+            organization=org,
+            sender=self.sender,
+            receiver=self.receiver,
+            channel=Message.Channel.SLACK,
+            intent=Message.Intent.REQUEST,
+            original_text="Fix this today.",
+            scores_before={"clarity": 50, "tone": 50, "receiver_fit": 50, "org_values_alignment": 50},
+            current_scores={"clarity": 50, "tone": 50, "receiver_fit": 50, "org_values_alignment": 50},
+        )
+        self.suggestion = InlineSuggestion.objects.create(
+            message=self.message,
+            target_text="Fix this today.",
+            suggested_replacement="Could you look at this today? It is blocking the release.",
+            affected_scores={"clarity": 10, "tone": 15, "receiver_fit": 10, "org_values_alignment": 5},
+        )
+
+    def test_accepting_suggestion_updates_scores(self):
+        set_suggestion_decision(self.suggestion, InlineSuggestion.Decision.ACCEPTED)
+        self.message.refresh_from_db()
+        self.assertEqual(self.message.current_scores["clarity"], 60)
+        self.assertEqual(self.message.current_scores["tone"], 65)
+        self.assertIn("Could you look", self.message.final_text)
+        self.assertIn(self.suggestion.id, self.message.accepted_suggestion_ids)
+        self.assertEqual(self.message.rejected_suggestion_ids, [])
+
+    def test_apply_accepted_suggestions_creates_revision(self):
+        apply_accepted_suggestions(self.message)
+        self.assertEqual(MessageRevision.objects.filter(message=self.message).count(), 1)
+
+    def test_accept_all_uses_overall_suggested_message(self):
+        self.message.overall_suggested_message = "Could you look at this today? It is blocking the release."
+        self.message.save(update_fields=["overall_suggested_message"])
+        set_suggestion_decision(self.suggestion, InlineSuggestion.Decision.ACCEPTED)
+        self.message.refresh_from_db()
+        self.assertEqual(self.message.final_text, self.message.overall_suggested_message)
+
+class MessageSuggestionViewTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        org = Organization.objects.create(name="Web Org")
+        team = Team.objects.create(organization=org, name="Engineering")
+        sender = Employee.objects.create(organization=org, team=team, name="Sender", role="PM")
+        receiver = Employee.objects.create(organization=org, team=team, name="Receiver", role="Engineer")
+        self.message = Message.objects.create(
+            organization=org,
+            sender=sender,
+            receiver=receiver,
+            channel=Message.Channel.SLACK,
+            intent=Message.Intent.REQUEST,
+            original_text="Fix this today. Send status.",
+            final_text="Fix this today. Send status.",
+            overall_suggested_message="Could you fix this today? Please send a brief status update.",
+            scores_before={"clarity": 40, "tone": 40, "receiver_fit": 40, "org_values_alignment": 40},
+            current_scores={"clarity": 40, "tone": 40, "receiver_fit": 40, "org_values_alignment": 40},
+        )
+        self.first = InlineSuggestion.objects.create(
+            message=self.message,
+            target_text="Fix this today.",
+            start_index=0,
+            end_index=15,
+            suggested_replacement="Could you fix this today?",
+            affected_scores={"clarity": 5, "tone": 10, "receiver_fit": 5, "org_values_alignment": 0},
+        )
+        self.second = InlineSuggestion.objects.create(
+            message=self.message,
+            target_text="Send status.",
+            start_index=16,
+            end_index=28,
+            suggested_replacement="Please send a brief status update.",
+            affected_scores={"clarity": 10, "tone": 5, "receiver_fit": 5, "org_values_alignment": 5},
+        )
+
+    def test_accept_suggestion_response_updates_scores_and_final_text(self):
+        response = self.client.post(
+            f"/api/messages/{self.message.id}/suggestions/{self.first.id}/decision/",
+            data=json.dumps({"decision": InlineSuggestion.Decision.ACCEPTED}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["current_scores"]["tone"], 50)
+        self.assertEqual(body["final_text"], "Could you fix this today? Send status.")
+
+    def test_reject_suggestion_response_recalculates_scores(self):
+        set_suggestion_decision(self.first, InlineSuggestion.Decision.ACCEPTED)
+        response = self.client.post(
+            f"/api/messages/{self.message.id}/suggestions/{self.second.id}/decision/",
+            data=json.dumps({"decision": InlineSuggestion.Decision.REJECTED}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["current_scores"]["tone"], 50)
+        self.assertEqual(body["final_text"], "Could you fix this today? Send status.")
+
+    def test_accept_all_response_uses_overall_llm_message(self):
+        response = self.client.post(
+            f"/api/messages/{self.message.id}/suggestions/bulk-decision/",
+            data=json.dumps({"decision": InlineSuggestion.Decision.ACCEPTED}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["final_text"], self.message.overall_suggested_message)
+        self.assertEqual(body["current_scores"]["clarity"], 55)
+
+class FeedbackProcessorTests(TestCase):
+    def test_receiver_feedback_appends_prompt_learning(self):
+        org = Organization.objects.create(name="Test Org")
+        team = Team.objects.create(organization=org, name="People")
+        sender = Employee.objects.create(organization=org, team=team, name="Sender", role="Manager")
+        receiver = Employee.objects.create(
+            organization=org,
+            team=team,
+            name="Receiver",
+            role="People Partner",
+            receiver_prompt="Original prompt.",
+            communication_preferences={},
+        )
+        message = Message.objects.create(
+            organization=org,
+            sender=sender,
+            receiver=receiver,
+            channel=Message.Channel.EMAIL,
+            intent=Message.Intent.FEEDBACK,
+            original_text="Message",
+        )
+        feedback = ReceiverFeedback.objects.create(
+            message=message,
+            sender=sender,
+            receiver=receiver,
+            too_direct=True,
+            free_text="Add more context before the ask.",
+        )
+
+        update_receiver_profile_from_feedback(feedback)
+        receiver.refresh_from_db()
+        self.assertIn("Recent receiver feedback learning", receiver.receiver_prompt)
+        self.assertIn("Avoid overly blunt", receiver.receiver_prompt)
+        self.assertIn("Add more context", receiver.receiver_prompt)
+
+class NebiusClientTests(TestCase):
+    @override_settings(NEBIUS_API_KEY="", NEBIUS_BASE_URL="https://example.com/v1", NEBIUS_MODEL="model")
+    def test_missing_key_raises_clear_error(self):
+        with self.assertRaises(NebiusConfigurationError):
+            NebiusLLMClient().chat_json(system_prompt="x", user_prompt="y")
+
+class ValidationTests(TestCase):
+    def test_invalid_inline_index_raises(self):
+        data = {
+            "overall_suggested_message": "x",
+            "inline_suggestions": [
+                {
+                    "target_text": "Hi",
+                    "suggested_replacement": "Hello",
+                    "start_index": 10,
+                    "end_index": 2,
+                }
+            ],
+            "scores_before": {
+                "clarity": 50,
+                "tone": 50,
+                "receiver_fit": 50,
+                "org_values_alignment": 50,
+            },
+            "estimated_scores_after_all_suggestions": {
+                "clarity": 60,
+                "tone": 60,
+                "receiver_fit": 60,
+                "org_values_alignment": 60,
+            },
+        }
+
+        with self.assertRaises(LLMResponseValidationError):
+            validate_analysis_response(data, "Hi there")
+
+class OrgImportTests(TestCase):
+    def test_import_org_creates_entities(self):
+        payload = {
+            "organization": {"name": "Test Org", "description": "Demo"},
+            "values": [{"name": "Clarity", "description": ""}],
+            "teams": [{"name": "Engineering", "description": "", "norms": []}],
+            "employees": [
+                {
+                    "name": "Alex",
+                    "role": "Engineer",
+                    "team": "Engineering",
+                    "manager": None,
+                    "seniority_level": "IC",
+                    "communication_preferences": {"style": "direct"},
+                    "pain_points": [],
+                    "receiver_prompt": "Be clear",
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as temp:
+            json.dump(payload, temp)
+            temp_path = temp.name
+
+        call_command("import_org", temp_path)
+        org = Organization.objects.get(name="Test Org")
+        self.assertEqual(org.teams.count(), 1)
+        self.assertEqual(org.employees.count(), 1)
+
+class ApiTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.org = Organization.objects.create(name="Api Org")
+        team = Team.objects.create(organization=self.org, name="Engineering")
+        self.sender = Employee.objects.create(organization=self.org, team=team, name="Sender", role="PM")
+        self.receiver = Employee.objects.create(organization=self.org, team=team, name="Receiver", role="Engineer")
+
+    def _headers(self):
+        return {"HTTP_X_API_KEY": "test-key", "HTTP_X_ORG_ID": str(self.org.id)}
+
+    @override_settings(COMMS_API_KEY="test-key")
+    def test_api_list_orgs_requires_key(self):
+        response = self.client.get("/api/v1/orgs/")
+        self.assertEqual(response.status_code, 401)
+
+    @override_settings(COMMS_API_KEY="test-key")
+    def test_api_list_orgs(self):
+        response = self.client.get("/api/v1/orgs/", **self._headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("orgs", response.json())
+
+    @override_settings(COMMS_API_KEY="test-key")
+    @patch("comms.services.llm_client.NebiusLLMClient.chat_json")
+    def test_api_analyze_message(self, chat_json):
+        chat_json.return_value = {
+            "overall_suggested_message": "Improved",
+            "subject_line": "Subject",
+            "slack_short_version": "Short",
+            "teams_short_version": "Short",
+            "inline_suggestions": [
+                {
+                    "id": "s1",
+                    "target_text": "Fix this.",
+                    "start_index": 0,
+                    "end_index": 9,
+                    "issue": "Too blunt",
+                    "suggested_replacement": "Could you fix this?",
+                    "reason": "Softer",
+                    "affected_scores": {"clarity": 5, "tone": 10, "receiver_fit": 5, "org_values_alignment": 5},
+                    "org_values_used": ["Respectful disagreement"],
+                }
+            ],
+            "scores_before": {"clarity": 50, "tone": 50, "receiver_fit": 50, "org_values_alignment": 50},
+            "estimated_scores_after_all_suggestions": {"clarity": 60, "tone": 60, "receiver_fit": 60, "org_values_alignment": 60},
+            "risks": [],
+            "summary_of_changes": "Summary",
+            "explanation": "Explanation",
+        }
+
+        payload = {
+            "org_id": self.org.id,
+            "sender_id": self.sender.id,
+            "receiver_id": self.receiver.id,
+            "channel": Message.Channel.SLACK,
+            "intent": Message.Intent.REQUEST,
+            "original_message": "Fix this.",
+        }
+
+        response = self.client.post(
+            "/api/v1/messages/analyze/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("message", body)

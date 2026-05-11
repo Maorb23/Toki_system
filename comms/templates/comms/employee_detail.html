@@ -1,0 +1,97 @@
+{% extends "comms/base.html" %}
+{% block content %}
+<section class="page-title">
+  <h1>{{ employee.name }}</h1>
+  <p>{{ employee.role }}{% if employee.team %} · {{ employee.team.name }}{% endif %}</p>
+</section>
+
+<section class="grid two">
+  <div class="card">
+    <h2>Profile</h2>
+    <dl>
+      <dt>Manager</dt><dd>{% if employee.manager %}<a href="{% url 'comms:employee_detail' employee.manager.id %}">{{ employee.manager.name }}</a>{% else %}—{% endif %}</dd>
+      <dt>Seniority</dt><dd>{{ employee.seniority_level }}</dd>
+      <dt>Preferences</dt><dd><pre>{{ employee.communication_preferences }}</pre></dd>
+      <dt>Pain points</dt><dd><pre>{{ employee.pain_points }}</pre></dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <h2>Edit communication profile</h2>
+    <form method="post">
+      {% csrf_token %}
+      <label>Style
+        <input name="style" value="{{ employee.communication_preferences.style|default:'' }}">
+      </label>
+      <label>Detail level
+        <input name="detail" value="{{ employee.communication_preferences.detail|default:'' }}">
+      </label>
+      <label>Preferred structure
+        <input name="structure" value="{{ employee.communication_preferences.structure|default:'' }}">
+      </label>
+      <label>Receiver prompt
+        <textarea name="receiver_prompt" rows="9">{{ employee.receiver_prompt }}</textarea>
+      </label>
+      <button class="button primary">Save Profile</button>
+    </form>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Recent receiver feedback</h2>
+  {% if feedback %}
+    <ul class="clean-list">
+      {% for item in feedback %}
+        <li>
+          <strong>{{ item.created_at }}</strong><br>
+          {{ item.prompt_update_summary }}<br>
+          <small>{{ item.free_text }}</small>
+          <details>
+            <summary>Prompt changes</summary>
+            <p><strong>Before</strong></p>
+            <pre class="message-text">{{ item.receiver_prompt_before }}</pre>
+            <p><strong>After</strong></p>
+            <pre class="message-text">{{ item.receiver_prompt_after }}</pre>
+          </details>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>No receiver feedback yet.</p>
+  {% endif %}
+</section>
+
+<section class="grid two">
+  <div class="card">
+    <h2>Recent messages sent</h2>
+    {% if sent_messages %}
+      <ul class="clean-list">
+        {% for message in sent_messages %}
+          <li>
+            <a href="{% url 'comms:message_detail' message.id %}">{{ message.receiver.name }}</a><br>
+            <small>{{ message.get_channel_display }} · {{ message.get_intent_display }} · {{ message.created_at }}</small>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No sent messages yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Recent messages received</h2>
+    {% if received_messages %}
+      <ul class="clean-list">
+        {% for message in received_messages %}
+          <li>
+            <a href="{% url 'comms:message_detail' message.id %}">{{ message.sender.name }}</a><br>
+            <small>{{ message.get_channel_display }} · {{ message.get_intent_display }} · {{ message.created_at }}</small>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No received messages yet.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

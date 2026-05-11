@@ -1,0 +1,97 @@
+{% extends "comms/base.html" %}
+{% load static %}
+{% block content %}
+<section class="page-title">
+  <h1>Message Analysis</h1>
+  <p>{{ message.sender.name }} → {{ message.receiver.name }} · {{ message.get_channel_display }} · {{ message.get_intent_display }}</p>
+</section>
+
+<section class="grid two">
+  <div class="card">
+    <h2>Inline Suggestions</h2>
+    <p class="hint">Suggestions appear near matching text. Accept/reject each one. Scores update from accepted suggestions only.</p>
+    <div 
+      id="inline-editor"
+      data-message-id="{{ message.id }}"
+      data-suggestions='{{ suggestions_json|escape }}'
+      data-decision-url-template="{% url 'comms:suggestion_decision' message.id 999999 %}"
+      data-bulk-url="{% url 'comms:bulk_suggestion_decision' message.id %}"
+      data-csrf="{{ csrf_token }}"
+      data-original-text="{{ message.original_text|escape }}"
+    >
+      <pre id="message-text" class="message-text">{{ message.final_text|default:message.original_text }}</pre>
+    </div>
+
+    <div class="actions">
+      <button class="button" id="accept-all">Accept All</button>
+      <button class="button" id="reject-all">Reject All</button>
+    </div>
+  </div>
+
+  <div class="card sticky">
+    <h2>Scores</h2>
+    <div id="score-panel" class="score-list">
+      {% for key, value in message.current_scores.items %}
+        <div>
+          <span>{{ key|title }}</span>
+          <progress max="100" value="{{ value }}"></progress>
+          <strong>{{ value }}</strong>
+        </div>
+      {% endfor %}
+    </div>
+
+    <h3>Risks</h3>
+    {% if message.risks %}
+      <ul>{% for risk in message.risks %}<li>{{ risk }}</li>{% endfor %}</ul>
+    {% else %}
+      <p>No risks returned.</p>
+    {% endif %}
+
+    <h3>Summary</h3>
+    <p>{{ message.summary_of_changes }}</p>
+
+    <h3>Suggested message</h3>
+    <pre class="message-text">{{ message.overall_suggested_message }}</pre>
+
+    {% if message.subject_line %}
+      <h3>Suggested subject</h3>
+      <p>{{ message.subject_line }}</p>
+    {% endif %}
+
+    {% if message.slack_short_version %}
+      <h3>Slack short version</h3>
+      <pre class="message-text">{{ message.slack_short_version }}</pre>
+    {% endif %}
+
+    {% if message.teams_short_version %}
+      <h3>Teams short version</h3>
+      <pre class="message-text">{{ message.teams_short_version }}</pre>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Final message</h2>
+  <pre id="final-text" class="message-text">{{ message.final_text }}</pre>
+
+  {% if revisions %}
+    <h3>Message versions</h3>
+    <ul class="clean-list">
+      {% for revision in revisions %}
+        <li>
+          <strong>V{{ revision.version_index }}</strong> {{ revision.note }}<br>
+          <small>{{ revision.created_at }}</small>
+          <pre class="message-text">{{ revision.text }}</pre>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  <form method="post" action="{% url 'comms:mark_message_sent' message.id %}">
+    {% csrf_token %}
+    <button class="button primary">Mark as Sent / Received</button>
+  </form>
+</section>
+
+<script src="{% static 'comms/workspace.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Receiver-Aware Comms POC</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{% static 'comms/styles.css' %}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{% url 'comms:dashboard' %}">Receiver-Aware Comms</a>
+    <nav>
+      <a href="{% url 'comms:dashboard' %}">Dashboard</a>
+      <a href="{% url 'comms:org_graph' %}">Org Graph</a>
+      <a href="{% url 'comms:workspace' %}">Workspace</a>
+      <a href="/admin/">Admin</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% if messages %}
+      <section class="messages">
+        {% for message in messages %}
+          <div class="message {{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+      </section>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

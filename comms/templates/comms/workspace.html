@@ -1,0 +1,63 @@
+{% extends "comms/base.html" %}
+{% block content %}
+<section class="page-title">
+  <h1>Message Improvement Workspace</h1>
+  <p>Analyze a draft and get receiver-aware suggestions. The system never sends automatically.</p>
+</section>
+
+{% if analysis_error %}
+  <section class="error-panel">
+    <h2>Analysis failed</h2>
+    <p>{{ analysis_error }}</p>
+    <p>Check Nebius configuration and runtime logs.</p>
+  </section>
+{% endif %}
+
+<section class="card">
+  <form method="post" class="workspace-form">
+    {% csrf_token %}
+
+    <div class="grid two">
+      <label>Sender
+        <select name="sender_id" required>
+          {% for employee in employees %}
+            <option value="{{ employee.id }}">{{ employee.name }} — {{ employee.role }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>Receiver
+        <select name="receiver_id" required>
+          {% for employee in employees %}
+            <option value="{{ employee.id }}">{{ employee.name }} — {{ employee.role }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <div class="grid two">
+      <label>Channel
+        <select name="channel" required>
+          {% for value,label in channels %}
+            <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>Intent
+        <select name="intent" required>
+          {% for value,label in intents %}
+            <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <label>Draft message
+      <textarea name="original_message" rows="10" required placeholder="Paste the draft message here..."></textarea>
+    </label>
+
+    <button class="button primary">Analyze and Suggest</button>
+  </form>
+</section>
+{% endblock %}

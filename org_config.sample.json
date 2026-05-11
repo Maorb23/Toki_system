@@ -1,0 +1,52 @@
+{
+  "organization": {
+    "name": "Aurora Systems",
+    "description": "A pseudo organization for receiver-aware communication POC imports."
+  },
+  "values": [
+    {"name": "Clarity over complexity", "description": "Prefer simple, direct communication."},
+    {"name": "Ownership and accountability", "description": "Make owners and next steps explicit."}
+  ],
+  "teams": [
+    {
+      "name": "Executive",
+      "description": "Company leadership and strategy.",
+      "norms": ["Lead with the decision", "Keep updates concise"]
+    },
+    {
+      "name": "Engineering",
+      "description": "Software delivery and reliability.",
+      "norms": ["Be precise", "Flag blockers early"]
+    }
+  ],
+  "employees": [
+    {
+      "name": "Jordan Lee",
+      "role": "CEO",
+      "team": "Executive",
+      "manager": null,
+      "seniority_level": "Executive",
+      "communication_preferences": {
+        "style": "concise, decision-oriented",
+        "detail": "low",
+        "structure": "decision, risk, ask"
+      },
+      "pain_points": ["unclear ownership"],
+      "receiver_prompt": "Lead with the decision and make ownership explicit."
+    },
+    {
+      "name": "Sam Ortiz",
+      "role": "VP Engineering",
+      "team": "Engineering",
+      "manager": "Jordan Lee",
+      "seniority_level": "Executive",
+      "communication_preferences": {
+        "style": "direct and technical",
+        "detail": "high",
+        "structure": "problem, cause, options, recommendation"
+      },
+      "pain_points": ["vague technical claims"],
+      "receiver_prompt": "Be technically precise and surface blockers early."
+    }
+  ]
+}

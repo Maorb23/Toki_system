@@ -1,0 +1,15 @@
+{% extends "comms/base.html" %}
+{% load static %}
+{% block content %}
+<section class="page-title">
+  <h1>Organization Graph</h1>
+  <p>Hierarchy and team grouping for {{ org.name }}.</p>
+</section>
+
+<section class="card">
+  <div id="org-graph" class="org-graph" data-employees='{{ employees_json|escape }}'></div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="{% static 'comms/graph.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,63 @@
+{% extends "comms/base.html" %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Pseudo organization POC</p>
+    <h1>{{ org.name }}</h1>
+    <p>{{ org.description }}</p>
+  </div>
+  <a class="button primary" href="{% url 'comms:workspace' %}">Analyze a Message</a>
+</section>
+
+<section class="grid four">
+  <div class="metric"><span>{{ org.teams.count }}</span><p>Teams</p></div>
+  <div class="metric"><span>{{ org.employees.count }}</span><p>Employees</p></div>
+  <div class="metric"><span>{{ org.values.count }}</span><p>Org Values</p></div>
+  <div class="metric"><span>{{ recent_messages|length }}</span><p>Recent Messages</p></div>
+</section>
+
+<section class="grid two">
+  <div class="card">
+    <h2>Average Current Scores</h2>
+    <div class="score-list">
+      {% for key, value in avg_scores.items %}
+        <div>
+          <span>{{ key|title }}</span>
+          <progress max="100" value="{{ value }}"></progress>
+          <strong>{{ value }}</strong>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Communication Values</h2>
+    <ul class="clean-list">
+      {% for value in org.values.all %}
+        <li><strong>{{ value.name }}</strong><br><small>{{ value.description }}</small></li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Recent message activity</h2>
+  {% if recent_messages %}
+    <table>
+      <thead><tr><th>Message</th><th>Channel</th><th>Status</th><th>Created</th></tr></thead>
+      <tbody>
+        {% for message in recent_messages %}
+        <tr>
+          <td><a href="{% url 'comms:message_detail' message.id %}">{{ message.sender.name }} → {{ message.receiver.name }}</a></td>
+          <td>{{ message.get_channel_display }}</td>
+          <td>{{ message.get_status_display }}</td>
+          <td>{{ message.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No messages analyzed yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
