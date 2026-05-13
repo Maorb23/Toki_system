@@ -19,6 +19,7 @@ urlpatterns = [
     path("messages/<int:message_id>/receiver-feedback/", views.receiver_feedback, name="receiver_feedback"),
     path("api/messages/<int:message_id>/suggestions/<int:suggestion_id>/decision/", views.suggestion_decision, name="suggestion_decision"),
     path("api/messages/<int:message_id>/suggestions/bulk-decision/", views.bulk_suggestion_decision, name="bulk_suggestion_decision"),
+    path("api/orgs/<int:org_id>/inline-suggestions/preview/", api.api_inline_suggestions_preview, name="api_inline_suggestions_preview"),
 
     path("api/v1/orgs/", api.api_list_orgs, name="api_list_orgs"),
     path("api/v1/orgs/<int:org_id>/teams/", api.api_list_teams, name="api_list_teams"),

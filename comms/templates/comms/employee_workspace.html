@@ -1,4 +1,5 @@
 {% extends "comms/base.html" %}
+{% load static %}
 {% block content %}
 <section class="page-title">
   <div>
@@ -18,7 +19,7 @@
 {% endif %}
 
 <section class="card">
-  <form method="post" class="workspace-form">
+  <form method="post" class="workspace-form live-preview-form" data-preview-url="{% url 'comms:api_inline_suggestions_preview' org.id %}" data-sender-id="{{ sender.id }}">
     {% csrf_token %}
 
     <div class="grid two">
@@ -53,11 +54,29 @@
       </label>
     </div>
 
+    <fieldset class="mode-toggle">
+      <legend>Suggestion mode</legend>
+      <label>
+        <input type="radio" name="suggestion_mode" value="full" checked>
+        Analyze and Suggest
+      </label>
+      <label>
+        <input type="radio" name="suggestion_mode" value="lightweight">
+        Lightweight inline suggestion
+      </label>
+    </fieldset>
+
     <label>Draft message
       <textarea name="original_message" rows="10" required placeholder="Paste the draft message here...">{{ form_data.original_message }}</textarea>
     </label>
 
+    <div class="live-preview-panel" data-live-preview-panel hidden>
+      <div class="live-preview-status" data-live-preview-status>Pause typing for lightweight suggestions.</div>
+      <div class="live-preview-list" data-live-preview-list></div>
+    </div>
+
     <button class="button primary">Analyze and Suggest</button>
   </form>
 </section>
+<script src="{% static 'comms/live_preview.js' %}"></script>
 {% endblock %}

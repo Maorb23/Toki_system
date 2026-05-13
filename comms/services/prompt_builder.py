@@ -13,6 +13,17 @@ Do not include markdown.
 Do not include commentary outside JSON.
 """
 
+INLINE_PREVIEW_SYSTEM_PROMPT = """
+You are an organizational communication coach providing lightweight inline suggestions while a sender types.
+
+Analyze only the changed text and nearby context provided by the user.
+Do not rewrite the full message.
+Do not produce subject lines, channel-specific versions, risks, summaries, explanations, or scores before/after.
+Return structured JSON only.
+Do not include markdown.
+Do not include commentary outside JSON.
+"""
+
 def _safe_json(value) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
@@ -119,6 +130,88 @@ def build_message_analysis_prompt(
             "risks": ["string"],
             "summary_of_changes": "string",
             "explanation": "string"
+        },
+    }
+
+    return _safe_json(payload)
+
+def build_inline_preview_prompt(
+    *,
+    organization: Organization,
+    sender: Employee,
+    receiver: Employee,
+    channel: str,
+    intent: str,
+    full_draft: str,
+    changed_text: str,
+    surrounding_context: str,
+) -> str:
+    receiver_team = receiver.team
+    org_values = [
+        {"name": value.name, "description": value.description}
+        for value in organization.values.all()
+    ]
+
+    payload = {
+        "task": "Provide lightweight receiver-aware inline suggestions for changed text only.",
+        "hard_rules": [
+            "Analyze only changed_text and surrounding_context.",
+            "Return suggestions only when there is a concrete improvement.",
+            "Preserve the sender's intent.",
+            "Avoid over-polishing. Keep the sender's voice natural.",
+            "target_text must be an exact contiguous substring of changed_text.",
+            "Use complete words or complete sentence spans. Never target part of a word.",
+            "Do not create overlapping suggestions.",
+            "Do not rewrite the full draft.",
+            "Do not return subject_line, Slack version, Teams version, full risks, summary, explanation, scores_before, or estimated scores.",
+            "Return JSON only.",
+        ],
+        "organization": {
+            "name": organization.name,
+            "values": org_values,
+        },
+        "sender": {
+            "id": sender.id,
+            "name": sender.name,
+            "role": sender.role,
+            "team": sender.team.name if sender.team else None,
+        },
+        "receiver": {
+            "id": receiver.id,
+            "name": receiver.name,
+            "role": receiver.role,
+            "team": receiver_team.name if receiver_team else None,
+            "communication_preferences": receiver.communication_preferences,
+            "pain_points": receiver.pain_points,
+            "receiver_prompt": receiver.receiver_prompt,
+        },
+        "receiver_team_context": {
+            "name": receiver_team.name if receiver_team else None,
+            "description": receiver_team.description if receiver_team else "",
+            "norms": receiver_team.norms if receiver_team else [],
+        },
+        "message_context": {
+            "channel": channel,
+            "intent": intent,
+            "full_draft": full_draft,
+            "changed_text": changed_text,
+            "surrounding_context": surrounding_context,
+        },
+        "required_json_schema": {
+            "inline_suggestions": [
+                {
+                    "target_text": "exact text from changed_text",
+                    "suggested_replacement": "string",
+                    "issue": "string",
+                    "reason": "string",
+                    "affected_scores": {
+                        "clarity": "integer delta, usually 0-10",
+                        "tone": "integer delta, usually 0-10",
+                        "receiver_fit": "integer delta, usually 0-10",
+                        "org_values_alignment": "integer delta, usually 0-10"
+                    }
+                }
+            ]
         },
     }
 

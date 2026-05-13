@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.views.decorators.http import require_GET, require_POST
 from django.utils import timezone
 from comms.models import Organization, Team, Employee, Message, InlineSuggestion, ReceiverFeedback
+from comms.services.inline_preview import InlineSuggestionPreviewer
 from comms.services.message_analyzer import MessageAnalyzer, LLMResponseValidationError
 from comms.services.llm_client import NebiusConfigurationError, NebiusRuntimeError
 from comms.services.score_engine import set_suggestion_decision, recalculate_scores, apply_accepted_suggestions, sync_suggestion_decisions
@@ -127,6 +128,45 @@ def serialize_message(message: Message) -> dict:
         "created_at": message.created_at.isoformat(),
         "sent_at": message.sent_at.isoformat() if message.sent_at else None,
     }
+
+
+@require_POST
+def api_inline_suggestions_preview(request: HttpRequest, org_id: int):
+    try:
+        payload = parse_json(request)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    sender_id = payload.get("sender_id")
+    receiver_id = payload.get("receiver_id")
+    channel = payload.get("channel")
+    intent = payload.get("intent")
+    full_draft = payload.get("full_draft") or ""
+    changed_text = (payload.get("changed_text") or "").strip()
+    surrounding_context = payload.get("surrounding_context") or ""
+
+    if not all([sender_id, receiver_id, channel, intent, full_draft, changed_text]):
+        return JsonResponse({
+            "error": "sender_id, receiver_id, channel, intent, full_draft, and changed_text are required"
+        }, status=400)
+
+    sender = get_object_or_404(Employee.objects.select_related("organization", "team"), pk=sender_id, organization_id=org_id)
+    receiver = get_object_or_404(Employee.objects.select_related("organization", "team"), pk=receiver_id, organization_id=org_id)
+
+    try:
+        preview = InlineSuggestionPreviewer().preview(
+            sender=sender,
+            receiver=receiver,
+            channel=channel,
+            intent=intent,
+            full_draft=full_draft,
+            changed_text=changed_text,
+            surrounding_context=surrounding_context,
+        )
+    except (NebiusConfigurationError, NebiusRuntimeError, LLMResponseValidationError, ValueError) as exc:
+        return JsonResponse({"error": f"Inline preview failed: {exc}"}, status=400)
+
+    return JsonResponse(preview)
 
 
 @require_GET

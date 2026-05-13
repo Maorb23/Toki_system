@@ -351,3 +351,45 @@ class ApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertIn("message", body)
+
+    @patch("comms.services.llm_client.NebiusLLMClient.chat_json")
+    def test_inline_preview_endpoint_returns_suggestions_without_creating_message(self, chat_json):
+        chat_json.return_value = {
+            "inline_suggestions": [
+                {
+                    "target_text": "what is the deadline?",
+                    "suggested_replacement": "what is a realistic deadline for completing this?",
+                    "issue": "The ask is clear but could invite a realistic estimate.",
+                    "reason": "Keeps the ask while making room for the receiver's constraints.",
+                    "affected_scores": {
+                        "clarity": 6,
+                        "tone": 2,
+                        "receiver_fit": 5,
+                        "org_values_alignment": 4,
+                    },
+                }
+            ]
+        }
+        before_count = Message.objects.count()
+        payload = {
+            "sender_id": self.sender.id,
+            "receiver_id": self.receiver.id,
+            "channel": Message.Channel.SLACK,
+            "intent": Message.Intent.REQUEST,
+            "full_draft": "Hey Dana, what is the deadline?",
+            "changed_text": "what is the deadline?",
+            "surrounding_context": "Hey Dana,",
+        }
+
+        response = self.client.post(
+            f"/api/orgs/{self.org.id}/inline-suggestions/preview/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("text_hash", body)
+        self.assertEqual(len(body["suggestions"]), 1)
+        self.assertEqual(body["suggestions"][0]["target_text"], "what is the deadline?")
+        self.assertEqual(Message.objects.count(), before_count)

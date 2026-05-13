@@ -230,6 +230,71 @@ th, td {
   margin: 0 8px 0 0;
 }
 
+.mode-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.mode-toggle legend {
+  font-weight: 800;
+  padding: 0 6px;
+}
+
+.mode-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-weight: 600;
+}
+
+.mode-toggle input {
+  width: auto;
+  margin: 0;
+}
+
+.live-preview-panel {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fbfaf8;
+  padding: 14px;
+  margin: -4px 0 16px;
+}
+
+.live-preview-status {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.live-preview-list {
+  display: grid;
+  gap: 10px;
+}
+
+.live-preview-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 12px;
+}
+
+.live-preview-item p {
+  margin: 8px 0;
+}
+
+.live-preview-item .replacement {
+  background: #f6f7ff;
+  border-left: 3px solid var(--primary);
+  padding: 8px;
+  border-radius: 10px;
+}
+
 .inline-segment {
   position: relative;
   background: #fff2ba;
