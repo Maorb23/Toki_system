@@ -6,6 +6,7 @@ app_name = "comms"
 
 urlpatterns = [
     path("", views.mode_select, name="mode_select"),
+    path("orgs/<int:org_id>/select/", views.select_org, name="select_org"),
     path("org/", views.dashboard, name="dashboard"),
     path("org-graph/", views.org_graph, name="org_graph"),
     path("employees/<int:employee_id>/", views.employee_detail, name="employee_detail"),

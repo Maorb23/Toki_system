@@ -184,6 +184,24 @@ class ModeSplitTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Northstar Labs")
 
+    def test_selecting_org_changes_landing_and_personas(self):
+        office = Organization.objects.create(name="The Office", description="Scranton branch")
+        team = Team.objects.create(organization=office, name="Regional Management")
+        Employee.objects.create(
+            organization=office,
+            team=team,
+            name="Michael Scott",
+            role="Regional Manager",
+        )
+
+        response = self.client.get(f"/orgs/{office.id}/select/")
+        self.assertRedirects(response, "/")
+
+        response = self.client.get("/")
+        self.assertContains(response, "The Office")
+        self.assertContains(response, "Michael Scott")
+        self.assertNotContains(response, "Rina Tal")
+
 class FeedbackProcessorTests(TestCase):
     def test_receiver_feedback_appends_prompt_learning(self):
         org = Organization.objects.create(name="Test Org")

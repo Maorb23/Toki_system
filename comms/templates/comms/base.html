@@ -11,6 +11,9 @@
   <header class="topbar">
     <a class="brand" href="{% url 'comms:mode_select' %}">Receiver-Aware Comms</a>
     <nav>
+      {% if org %}
+        <span class="current-org">{{ org.name }}</span>
+      {% endif %}
       <a href="{% url 'comms:mode_select' %}">Mode</a>
       <a href="{% url 'comms:dashboard' %}">Org View</a>
       {% if current_employee %}

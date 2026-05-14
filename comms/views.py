@@ -3,6 +3,7 @@ from django.contrib import messages
 from django.http import JsonResponse, HttpRequest, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -14,30 +15,67 @@ from comms.services.score_engine import set_suggestion_decision, recalculate_sco
 
 EMPLOYEE_MODE_PERSONAS = [
     {"name": "Rina Tal", "role": "Customer Success Manager"},
-    {"name": "Dana Weiss", "role": "Engineering Lead"},
-    {"name": "Noam Bar", "role": "VP Product"},
+    {"name": "Dana Weiss", "role": "Backend Engineer"},
+    {"name": "Noam Bar", "role": "VP Engineering"},
     {"name": "Ari Cohen", "role": "CEO"},
 ]
 
+EMPLOYEE_MODE_PERSONAS_BY_ORG = {
+    "Northstar Labs": EMPLOYEE_MODE_PERSONAS,
+    "The Office": [
+        {"name": "Michael Scott", "role": "Regional Manager"},
+        {"name": "Pam Beesly", "role": "Office Administrator"},
+        {"name": "Jim Halpert", "role": "Sales Lead"},
+        {"name": "Oscar Martinez", "role": "Senior Data Scientist"},
+    ],
+}
 
-def _get_default_org() -> Organization | None:
-    return Organization.objects.prefetch_related("values", "teams", "employees").first()
+
+def _get_current_org(request: HttpRequest) -> Organization | None:
+    orgs = Organization.objects.prefetch_related("values", "teams", "employees")
+    org_id = request.session.get("selected_org_id")
+    org = orgs.filter(pk=org_id).first() if org_id else None
+    if org:
+        return org
+
+    org = orgs.filter(name="Northstar Labs").first() or orgs.order_by("id").first()
+    if org:
+        request.session["selected_org_id"] = org.id
+    return org
+
+
+def _org_options() -> list[Organization]:
+    preferred = {"Northstar Labs": 0, "The Office": 1}
+    return sorted(
+        Organization.objects.all(),
+        key=lambda org: (preferred.get(org.name, 2), org.name),
+    )
 
 def _get_current_employee(request: HttpRequest) -> Employee | None:
+    org = _get_current_org(request)
+    if not org:
+        return None
     employee_id = request.session.get("employee_mode_employee_id")
     if not employee_id:
         return None
-    return Employee.objects.select_related("team", "manager", "organization").filter(pk=employee_id).first()
+    return Employee.objects.select_related("team", "manager", "organization").filter(
+        pk=employee_id,
+        organization=org,
+    ).first()
 
 def _persona_options(org: Organization | None) -> list[dict]:
     if not org:
         return []
 
+    personas = EMPLOYEE_MODE_PERSONAS_BY_ORG.get(org.name) or [
+        {"name": employee.name, "role": employee.role}
+        for employee in Employee.objects.filter(organization=org).order_by("team__name", "name")[:4]
+    ]
     employees = {
         employee.name: employee
         for employee in Employee.objects.filter(
             organization=org,
-            name__in=[persona["name"] for persona in EMPLOYEE_MODE_PERSONAS],
+            name__in=[persona["name"] for persona in personas],
         ).select_related("team")
     }
     return [
@@ -46,22 +84,36 @@ def _persona_options(org: Organization | None) -> list[dict]:
             "name": persona["name"],
             "role": persona["role"],
         }
-        for persona in EMPLOYEE_MODE_PERSONAS
+        for persona in personas
     ]
 
+def select_org(request: HttpRequest, org_id: int):
+    org = get_object_or_404(Organization, pk=org_id)
+    previous_org_id = request.session.get("selected_org_id")
+    request.session["selected_org_id"] = org.id
+    if previous_org_id != org.id:
+        request.session.pop("employee_mode_employee_id", None)
+    messages.success(request, f"Switched to {org.name}.")
+
+    next_url = request.GET.get("next") or reverse("comms:mode_select")
+    if not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
+        next_url = reverse("comms:mode_select")
+    return redirect(next_url)
+
 def mode_select(request: HttpRequest):
-    org = _get_default_org()
+    org = _get_current_org(request)
     if not org:
         return render(request, "comms/empty.html")
 
     return render(request, "comms/mode_select.html", {
         "org": org,
+        "orgs": _org_options(),
         "personas": _persona_options(org),
         "current_employee": _get_current_employee(request),
     })
 
 def dashboard(request: HttpRequest):
-    org = _get_default_org()
+    org = _get_current_org(request)
     if not org:
         return render(request, "comms/empty.html")
 
@@ -92,7 +144,7 @@ def dashboard(request: HttpRequest):
     })
 
 def employee_sign_in(request: HttpRequest, employee_id: int):
-    org = _get_default_org()
+    org = _get_current_org(request)
     employee = get_object_or_404(Employee, pk=employee_id, organization=org)
     request.session["employee_mode_employee_id"] = employee.id
     messages.success(request, f"Continuing as {employee.name}.")
@@ -113,6 +165,7 @@ def employee_home(request: HttpRequest):
     received_messages = Message.objects.filter(receiver=employee).select_related("sender").order_by("-created_at")[:8]
     feedback = ReceiverFeedback.objects.filter(receiver=employee).order_by("-created_at")[:5]
     return render(request, "comms/employee_home.html", {
+        "org": employee.organization,
         "employee": employee,
         "sent_messages": sent_messages,
         "received_messages": received_messages,
@@ -121,7 +174,7 @@ def employee_home(request: HttpRequest):
     })
 
 def org_graph(request: HttpRequest):
-    org = _get_default_org()
+    org = _get_current_org(request)
     if not org:
         return render(request, "comms/empty.html")
 
@@ -145,7 +198,12 @@ def org_graph(request: HttpRequest):
     })
 
 def employee_detail(request: HttpRequest, employee_id: int):
-    employee = get_object_or_404(Employee.objects.select_related("team", "manager", "organization"), pk=employee_id)
+    org = _get_current_org(request)
+    employee = get_object_or_404(
+        Employee.objects.select_related("team", "manager", "organization"),
+        pk=employee_id,
+        organization=org,
+    )
 
     if request.method == "POST":
         employee.receiver_prompt = request.POST.get("receiver_prompt", "").strip()
@@ -169,6 +227,7 @@ def employee_detail(request: HttpRequest, employee_id: int):
     sent_messages = Message.objects.filter(sender=employee).order_by("-created_at")[:6]
     received_messages = Message.objects.filter(receiver=employee).order_by("-created_at")[:6]
     return render(request, "comms/employee_detail.html", {
+        "org": org,
         "employee": employee,
         "feedback": feedback,
         "sent_messages": sent_messages,
@@ -177,7 +236,7 @@ def employee_detail(request: HttpRequest, employee_id: int):
     })
 
 def workspace(request: HttpRequest):
-    org = _get_default_org()
+    org = _get_current_org(request)
     if not org:
         return render(request, "comms/empty.html")
 
@@ -185,7 +244,7 @@ def workspace(request: HttpRequest):
     return _workspace(request, org=org, employees=employees, sender=None, template="comms/workspace.html")
 
 def employee_workspace(request: HttpRequest):
-    org = _get_default_org()
+    org = _get_current_org(request)
     employee = _get_current_employee(request)
     if not org:
         return render(request, "comms/empty.html")
@@ -247,13 +306,16 @@ def _workspace(request: HttpRequest, *, org: Organization, employees, sender: Em
     })
 
 def message_detail(request: HttpRequest, message_id: int):
+    org = _get_current_org(request)
     message = get_object_or_404(
         Message.objects.select_related("sender", "receiver", "organization").prefetch_related("suggestions", "revisions"),
         pk=message_id,
+        organization=org,
     )
     recalculate_scores(message)
     apply_accepted_suggestions(message)
     return render(request, "comms/message_detail.html", {
+        "org": message.organization,
         "message": message,
         "revisions": message.revisions.all(),
         "current_employee": _get_current_employee(request),
@@ -276,7 +338,8 @@ def message_detail(request: HttpRequest, message_id: int):
 
 @require_POST
 def suggestion_decision(request: HttpRequest, message_id: int, suggestion_id: int):
-    message = get_object_or_404(Message, pk=message_id)
+    org = _get_current_org(request)
+    message = get_object_or_404(Message, pk=message_id, organization=org)
     suggestion = get_object_or_404(InlineSuggestion, pk=suggestion_id, message=message)
 
     try:
@@ -300,7 +363,8 @@ def suggestion_decision(request: HttpRequest, message_id: int, suggestion_id: in
 
 @require_POST
 def bulk_suggestion_decision(request: HttpRequest, message_id: int):
-    message = get_object_or_404(Message, pk=message_id)
+    org = _get_current_org(request)
+    message = get_object_or_404(Message, pk=message_id, organization=org)
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
     except json.JSONDecodeError:
@@ -324,7 +388,8 @@ def bulk_suggestion_decision(request: HttpRequest, message_id: int):
 
 @require_POST
 def mark_message_sent(request: HttpRequest, message_id: int):
-    message = get_object_or_404(Message, pk=message_id)
+    org = _get_current_org(request)
+    message = get_object_or_404(Message, pk=message_id, organization=org)
     apply_accepted_suggestions(message)
     recalculate_scores(message)
     message.status = Message.Status.SENT
@@ -334,7 +399,12 @@ def mark_message_sent(request: HttpRequest, message_id: int):
     return redirect("comms:receiver_feedback", message_id=message.id)
 
 def receiver_feedback(request: HttpRequest, message_id: int):
-    message = get_object_or_404(Message.objects.select_related("sender", "receiver"), pk=message_id)
+    org = _get_current_org(request)
+    message = get_object_or_404(
+        Message.objects.select_related("sender", "receiver"),
+        pk=message_id,
+        organization=org,
+    )
 
     if request.method == "POST":
         feedback = ReceiverFeedback.objects.create(
@@ -359,6 +429,7 @@ def receiver_feedback(request: HttpRequest, message_id: int):
         return redirect("comms:employee_detail", employee_id=message.receiver_id)
 
     return render(request, "comms/receiver_feedback.html", {
+        "org": message.organization,
         "message": message,
         "current_employee": _get_current_employee(request),
     })

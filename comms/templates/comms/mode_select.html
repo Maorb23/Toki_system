@@ -2,11 +2,20 @@
 {% block content %}
 <section class="hero mode-hero">
   <div>
-    <p class="eyebrow">Choose mode</p>
+    <p class="eyebrow">Choose organization and mode</p>
     <h1>{{ org.name }}</h1>
-    <p>Use the organization view for the full admin-style workspace, or continue as an employee for a focused sender experience.</p>
+    <p>{{ org.description }}</p>
   </div>
   <a class="button primary" href="{% url 'comms:dashboard' %}">Open Org View</a>
+</section>
+
+<section class="org-picker">
+  {% for option in orgs %}
+    <a class="org-choice{% if option.id == org.id %} active{% endif %}" href="{% url 'comms:select_org' option.id %}">
+      <strong>{{ option.name }}</strong>
+      <span>{{ option.description|truncatechars:120 }}</span>
+    </a>
+  {% endfor %}
 </section>
 
 <section class="grid two mode-grid">

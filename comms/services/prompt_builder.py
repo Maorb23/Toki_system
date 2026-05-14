@@ -90,6 +90,7 @@ def build_message_analysis_prompt(
         "message_context": {
             "channel": channel,
             "intent": intent,
+            "intent_guidance": "Interpret all suggestions through this communication intent and preserve that intent.",
             "original_message": original_message,
         },
         "required_json_schema": {
@@ -193,6 +194,7 @@ def build_inline_preview_prompt(
         "message_context": {
             "channel": channel,
             "intent": intent,
+            "intent_guidance": "Use this intent to judge whether the changed text fits the sender's goal.",
             "full_draft": full_draft,
             "changed_text": changed_text,
             "surrounding_context": surrounding_context,
