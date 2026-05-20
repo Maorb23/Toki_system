@@ -45,6 +45,15 @@
         {% endif %}
       {% endfor %}
     </div>
+    <h3>All users</h3>
+    <div class="persona-list all-users-list">
+      {% for employee in employees %}
+        <a class="persona-option" href="{% url 'comms:employee_sign_in' employee.id %}">
+          <strong>{{ employee.name }}</strong>
+          <span>{{ employee.role }}{% if employee.team %} &middot; {{ employee.team.name }}{% endif %}</span>
+        </a>
+      {% endfor %}
+    </div>
   </div>
 </section>
 {% endblock %}

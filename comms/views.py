@@ -8,10 +8,9 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from comms.models import Organization, Employee, Message, InlineSuggestion, ReceiverFeedback
-from comms.services.feedback_processor import update_receiver_profile_from_feedback
 from comms.services.llm_client import NebiusConfigurationError, NebiusRuntimeError
 from comms.services.message_analyzer import MessageAnalyzer, LLMResponseValidationError
-from comms.services.score_engine import set_suggestion_decision, recalculate_scores, apply_accepted_suggestions, sync_suggestion_decisions
+from comms.services.score_engine import SCORE_KEYS, clamp_score, set_suggestion_decision, recalculate_scores, apply_accepted_suggestions, sync_suggestion_decisions
 
 EMPLOYEE_MODE_PERSONAS = [
     {"name": "Rina Tal", "role": "Customer Success Manager"},
@@ -109,6 +108,7 @@ def mode_select(request: HttpRequest):
         "org": org,
         "orgs": _org_options(),
         "personas": _persona_options(org),
+        "employees": Employee.objects.filter(organization=org).select_related("team").order_by("team__name", "name"),
         "current_employee": _get_current_employee(request),
     })
 
@@ -261,6 +261,26 @@ def employee_workspace(request: HttpRequest):
         template="comms/employee_workspace.html",
     )
 
+def _parse_lightweight_scores(raw_scores: str) -> dict:
+    fallback = {
+        "clarity": 80,
+        "tone": 90,
+        "receiver_fit": 70,
+        "org_values_alignment": 80,
+    }
+    try:
+        scores = json.loads(raw_scores or "{}")
+    except json.JSONDecodeError:
+        return fallback
+
+    if not isinstance(scores, dict):
+        return fallback
+
+    return {
+        key: clamp_score(scores.get(key, fallback[key]))
+        for key in SCORE_KEYS
+    }
+
 def _workspace(request: HttpRequest, *, org: Organization, employees, sender: Employee | None, template: str):
     if request.method == "POST":
         selected_sender = sender or get_object_or_404(Employee, pk=request.POST.get("sender_id"), organization=org)
@@ -272,6 +292,24 @@ def _workspace(request: HttpRequest, *, org: Organization, employees, sender: Em
         if not original_message:
             messages.error(request, "Draft message is required.")
             return redirect("comms:employee_workspace" if sender else "comms:workspace")
+
+        if request.POST.get("suggestion_mode") == "lightweight" and request.POST.get("compose_action") == "send":
+            scores = _parse_lightweight_scores(request.POST.get("lightweight_scores", ""))
+            message = Message.objects.create(
+                organization=org,
+                sender=selected_sender,
+                receiver=receiver,
+                channel=channel,
+                intent=intent,
+                original_text=original_message,
+                final_text=original_message,
+                scores_before=scores,
+                current_scores=scores,
+                status=Message.Status.SENT,
+                sent_at=timezone.now(),
+            )
+            messages.success(request, "Message marked as sent/received in the POC. Receiver can now provide feedback.")
+            return redirect("comms:receiver_feedback", message_id=message.id)
 
         try:
             message = MessageAnalyzer().analyze(
@@ -424,9 +462,15 @@ def receiver_feedback(request: HttpRequest, message_id: int):
             good_message=bool(request.POST.get("good_message")),
             free_text=request.POST.get("free_text", "").strip(),
         )
-        update_receiver_profile_from_feedback(feedback)
-        messages.success(request, "Receiver feedback saved and receiver profile updated.")
-        return redirect("comms:employee_detail", employee_id=message.receiver_id)
+        feedback.prompt_update_summary = "Feedback saved with message. Receiver profile was not updated."
+        feedback.save(update_fields=["prompt_update_summary"])
+        message.status = Message.Status.FEEDBACK_RECEIVED
+        message.save(update_fields=["status"])
+        messages.success(request, "Receiver feedback saved with the message. Receiver profile was not updated.")
+        current_employee = _get_current_employee(request)
+        if current_employee and current_employee.id == message.receiver_id:
+            return redirect("comms:employee_home")
+        return redirect("comms:message_detail", message_id=message.id)
 
     return render(request, "comms/receiver_feedback.html", {
         "org": message.organization,

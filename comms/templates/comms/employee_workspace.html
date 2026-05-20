@@ -66,16 +66,26 @@
       </label>
     </fieldset>
 
-    <label>Draft message
-      <textarea name="original_message" rows="10" required placeholder="Paste the draft message here...">{{ form_data.original_message }}</textarea>
-    </label>
+    <div class="compose-with-scores">
+      <label>Draft message
+        <textarea name="original_message" rows="10" required placeholder="Paste the draft message here...">{{ form_data.original_message }}</textarea>
+      </label>
 
-    <div class="live-preview-panel" data-live-preview-panel hidden>
+      <aside class="live-score-panel" data-live-score-panel>
+        <h2>Scores</h2>
+        <div class="live-score-list" data-live-score-list></div>
+      </aside>
+    </div>
+    <input type="hidden" name="lightweight_scores" value="">
+
+    <div class="live-preview-panel" data-live-preview-panel>
       <div class="live-preview-status" data-live-preview-status>Pause typing for lightweight suggestions.</div>
+      <div class="live-checked-text" data-live-checked-text></div>
       <div class="live-preview-list" data-live-preview-list></div>
     </div>
 
-    <button class="button primary">Analyze and Suggest</button>
+    <button class="button primary" data-full-submit>Analyze and Suggest</button>
+    <button class="button primary" type="submit" name="compose_action" value="send" data-lightweight-send>Send Message</button>
   </form>
 </section>
 <script src="{% static 'comms/live_preview.js' %}"></script>

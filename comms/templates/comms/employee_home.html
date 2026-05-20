@@ -64,6 +64,9 @@
           <li>
             <a href="{% url 'comms:message_detail' message.id %}">From {{ message.sender.name }}</a><br>
             <small>{{ message.get_channel_display }} &middot; {{ message.get_intent_display }} &middot; {{ message.created_at }}</small>
+            <div class="actions compact-actions">
+              <a class="button" href="{% url 'comms:receiver_feedback' message.id %}">Write feedback</a>
+            </div>
           </li>
         {% endfor %}
       </ul>

@@ -128,6 +128,10 @@ a:hover { text-decoration: underline; }
   margin-top: 16px;
 }
 
+.compact-actions {
+  margin-top: 8px;
+}
+
 .org-picker {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -303,12 +307,121 @@ th, td {
   margin: 0;
 }
 
+.compose-with-scores {
+  display: block;
+}
+
+.live-preview-form.is-lightweight .compose-with-scores {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 16px;
+  align-items: start;
+}
+
+.compose-with-scores > label {
+  margin-bottom: 16px;
+}
+
+.live-score-panel {
+  display: none;
+  position: sticky;
+  top: 92px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  padding: 14px;
+  margin-top: 28px;
+}
+
+.live-preview-form.is-lightweight .live-score-panel {
+  display: block;
+}
+
+.live-score-panel h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.live-score-list {
+  display: grid;
+  gap: 10px;
+}
+
+.live-score-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.live-score-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.live-score-row span {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.live-score-row strong {
+  font-size: 24px;
+}
+
+.live-checked-text {
+  display: none;
+  border: 1px dashed var(--primary);
+  border-radius: 12px;
+  background: #f6f7ff;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+}
+
+.live-checked-text.has-content {
+  display: block;
+}
+
+.live-checked-text span {
+  display: block;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.live-checked-text p {
+  margin: 0;
+  line-height: 1.5;
+}
+
 .live-preview-panel {
+  display: none;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: #fbfaf8;
   padding: 14px;
   margin: -4px 0 16px;
+}
+
+.live-preview-form.is-lightweight .live-preview-panel {
+  display: block;
+}
+
+.live-preview-form.is-lightweight [data-full-submit] {
+  display: none;
+}
+
+[data-lightweight-send] {
+  display: none;
+}
+
+.live-preview-form.is-lightweight [data-lightweight-send] {
+  display: inline-block;
 }
 
 .live-preview-status {
@@ -467,8 +580,13 @@ th, td {
 }
 
 @media (max-width: 900px) {
-  .grid.two, .grid.four, .org-picker {
+  .grid.two, .grid.four, .org-picker, .compose-with-scores {
     grid-template-columns: 1fr;
+  }
+
+  .live-score-panel {
+    position: static;
+    margin-top: 0;
   }
 
   .hero, .page-title {

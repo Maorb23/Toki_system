@@ -3,6 +3,7 @@ from comms.models import Organization, Team, Employee, Message, InlineSuggestion
 from comms.services.score_engine import recalculate_scores, set_suggestion_decision, apply_accepted_suggestions
 from comms.services.feedback_processor import update_receiver_profile_from_feedback
 from comms.services.llm_client import NebiusLLMClient, NebiusConfigurationError
+from comms.services.inline_preview import validate_inline_preview_response
 from comms.services.message_analyzer import validate_analysis_response, LLMResponseValidationError
 from django.test import override_settings
 from django.core.management import call_command
@@ -202,6 +203,77 @@ class ModeSplitTests(TestCase):
         self.assertContains(response, "Michael Scott")
         self.assertNotContains(response, "Rina Tal")
 
+    def test_mode_select_allows_sign_in_as_any_employee(self):
+        alex = Employee.objects.create(
+            organization=self.org,
+            team=self.rina.team,
+            name="Alex Kim",
+            role="Designer",
+        )
+
+        response = self.client.get("/")
+
+        self.assertContains(response, "All users")
+        self.assertContains(response, "Alex Kim")
+        self.assertContains(response, f"/employee/sign-in/{alex.id}/")
+
+    @patch("comms.views.MessageAnalyzer.analyze")
+    def test_lightweight_send_creates_sent_message_without_full_analysis(self, analyze):
+        response = self.client.post(
+            "/workspace/",
+            data={
+                "sender_id": self.rina.id,
+                "receiver_id": self.dana.id,
+                "channel": Message.Channel.SLACK,
+                "intent": Message.Intent.REQUEST,
+                "suggestion_mode": "lightweight",
+                "compose_action": "send",
+                "original_message": "Could you send the status update today?",
+                "lightweight_scores": json.dumps({
+                    "clarity": 86,
+                    "tone": 92,
+                    "receiver_fit": 75,
+                    "org_values_alignment": 84,
+                }),
+            },
+        )
+
+        message = Message.objects.get()
+        self.assertRedirects(response, f"/messages/{message.id}/receiver-feedback/")
+        analyze.assert_not_called()
+        self.assertEqual(message.status, Message.Status.SENT)
+        self.assertEqual(message.final_text, "Could you send the status update today?")
+        self.assertEqual(message.current_scores["clarity"], 86)
+
+    def test_receiver_feedback_save_does_not_update_profile_learning(self):
+        message = Message.objects.create(
+            organization=self.org,
+            sender=self.rina,
+            receiver=self.dana,
+            channel=Message.Channel.SLACK,
+            intent=Message.Intent.REQUEST,
+            original_text="Please send a status update.",
+            final_text="Please send a status update.",
+            status=Message.Status.SENT,
+        )
+        before_prompt = self.dana.receiver_prompt
+        self.client.get(f"/employee/sign-in/{self.dana.id}/")
+
+        response = self.client.post(
+            f"/messages/{message.id}/receiver-feedback/",
+            data={
+                "clear": "on",
+                "free_text": "This was clear enough.",
+            },
+        )
+
+        self.assertRedirects(response, "/employee/")
+        feedback = ReceiverFeedback.objects.get(message=message)
+        self.assertEqual(feedback.free_text, "This was clear enough.")
+        self.assertIn("not updated", feedback.prompt_update_summary)
+        self.dana.refresh_from_db()
+        self.assertEqual(self.dana.receiver_prompt, before_prompt)
+
 class FeedbackProcessorTests(TestCase):
     def test_receiver_feedback_appends_prompt_learning(self):
         org = Organization.objects.create(name="Test Org")
@@ -271,6 +343,31 @@ class ValidationTests(TestCase):
 
         with self.assertRaises(LLMResponseValidationError):
             validate_analysis_response(data, "Hi there")
+
+    def test_inline_preview_skips_suggestion_target_outside_changed_text(self):
+        data = {
+            "inline_suggestions": [
+                {
+                    "target_text": "outside text",
+                    "suggested_replacement": "replacement",
+                    "issue": "Bad span",
+                    "reason": "The model drifted.",
+                    "affected_scores": {"clarity": 5},
+                },
+                {
+                    "target_text": "deadline",
+                    "suggested_replacement": "realistic deadline",
+                    "issue": "Clarify ask",
+                    "reason": "Makes room for constraints.",
+                    "affected_scores": {"clarity": 5},
+                },
+            ]
+        }
+
+        suggestions = validate_inline_preview_response(data, "What is the deadline?")
+
+        self.assertEqual(len(suggestions), 1)
+        self.assertEqual(suggestions[0]["target_text"], "deadline")
 
 class OrgImportTests(TestCase):
     def test_import_org_creates_entities(self):

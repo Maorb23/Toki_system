@@ -43,9 +43,7 @@ def validate_inline_preview_response(data: dict, changed_text: str) -> list[dict
                 f"inline_suggestions[{index}].target_text and suggested_replacement are required"
             )
         if target_text not in changed_text:
-            raise LLMResponseValidationError(
-                f"inline_suggestions[{index}].target_text was not found in changed_text"
-            )
+            continue
 
         clean.append({
             "target_text": target_text,
