@@ -153,6 +153,105 @@ python manage.py import_org path/to/org_config.json
 
 See the sample format in `org_config.sample.json`.
 
+## Scheduled Automations
+
+These commands are intentionally simple Django management commands. They do not require Celery and can later be run by cron, Railway scheduled jobs, GitHub Actions, or n8n.
+
+Generate weekly communication metrics:
+
+```bash
+python manage.py weekly_team_communication_report
+python manage.py weekly_team_communication_report --organization-id 1
+```
+
+Check for org-values drift signals over the last 30 days:
+
+```bash
+python manage.py org_values_drift_check
+python manage.py org_values_drift_check --organization-id 1
+```
+
+Create pending feedback reminders for stale messages without sending email or calling webhooks:
+
+```bash
+python manage.py stale_feedback_reminder --days 7
+python manage.py stale_feedback_reminder --organization-id 1 --days 7
+```
+
+Import employees from CSV and create default receiver prompts for new/onboarded employees:
+
+```bash
+python manage.py import_employees_csv employees.csv --organization-id 1
+```
+
+CSV columns:
+
+```text
+name,email,role,team,manager_email,seniority_level
+```
+
+## Webhook / n8n / Zapier Integration
+
+Outgoing webhooks can deliver scheduled automation events to tools like n8n, Zapier, Make, Slack workflows, or internal receivers.
+
+Create a subscription in Django admin:
+
+```text
+http://127.0.0.1:8000/admin/comms/webhooksubscription/
+```
+
+Set:
+
+```text
+organization: target organization
+name: n8n reminders
+target_url: your n8n/Zapier/Make webhook URL
+secret: shared signing secret
+event_types: ["feedback.missing", "weekly_report.generated", "org_values_drift.checked"]
+is_active: checked
+```
+
+Recommended event types:
+
+```text
+feedback.missing
+weekly_report.generated
+org_values_drift.checked
+receiver_profile.refresh_proposed later
+```
+
+Webhook requests are signed with HMAC SHA256 in:
+
+```text
+X-ReceiverAware-Signature
+```
+
+The event name is also sent in:
+
+```text
+X-ReceiverAware-Event
+```
+
+Example n8n flow:
+1. Webhook trigger receives the event.
+2. Branch by `event_type`.
+3. For `feedback.missing`, send an email or Slack reminder.
+4. For weekly/drift reports, store the event in Google Sheets or notify an ops channel.
+
+Test by creating a matching subscription, then run:
+
+```bash
+python manage.py stale_feedback_reminder --days 7
+python manage.py weekly_team_communication_report
+python manage.py org_values_drift_check
+```
+
+To redeliver one event while debugging:
+
+```bash
+python manage.py deliver_webhook_event --event-id 123
+```
+
 ## REST API (v1)
 
 All API endpoints require `X-API-Key` and an `X-Org-Id` header (or `org_id` query/body).

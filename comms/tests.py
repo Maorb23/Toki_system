@@ -1,7 +1,24 @@
-from django.test import TestCase
-from comms.models import Organization, Team, Employee, Message, InlineSuggestion, ReceiverFeedback, MessageRevision, SystemEvent
+from django.test import TestCase, TransactionTestCase
+from comms.models import (
+    Employee,
+    FeedbackReminder,
+    InlineSuggestion,
+    Message,
+    MessageRevision,
+    OrgValue,
+    OrgValuesDriftCheck,
+    Organization,
+    ReceiverFeedback,
+    SystemEvent,
+    Team,
+    WebhookDelivery,
+    WebhookSubscription,
+    WeeklyCommunicationReport,
+)
 from comms.services.event_log import log_event
+from comms.services.onboarding import ensure_employee_onboarding
 from comms.services.score_engine import recalculate_scores, set_suggestion_decision, apply_accepted_suggestions
+from comms.services.webhooks import sign_webhook_payload
 from comms.services.feedback_processor import update_receiver_profile_from_feedback
 from comms.services.llm_client import NebiusLLMClient, NebiusConfigurationError
 from comms.services.inline_preview import validate_inline_preview_response
@@ -10,6 +27,8 @@ from django.test import override_settings
 from django.core.management import call_command
 from django.test import Client
 from unittest.mock import patch
+from io import StringIO
+from django.utils import timezone
 import tempfile
 import json
 
@@ -435,6 +454,279 @@ class SystemEventTests(TestCase):
             event = log_event("test.event", message=self.message)
 
         self.assertIsNone(event)
+
+
+class ScheduledAutomationTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name="Automation Org")
+        OrgValue.objects.create(organization=self.org, name="Clarity", description="Be clear")
+        OrgValue.objects.create(organization=self.org, name="Ownership", description="Own outcomes")
+        self.team = Team.objects.create(organization=self.org, name="Engineering")
+        self.sender = Employee.objects.create(
+            organization=self.org,
+            team=self.team,
+            name="Sender",
+            email="sender@example.com",
+            role="PM",
+        )
+        self.receiver = Employee.objects.create(
+            organization=self.org,
+            team=self.team,
+            name="Receiver",
+            email="receiver@example.com",
+            role="Engineer",
+        )
+
+    def _message(self, *, days_old=1, status=Message.Status.SENT, text="Private full message text"):
+        created_at = timezone.now() - timezone.timedelta(days=days_old)
+        message = Message.objects.create(
+            organization=self.org,
+            sender=self.sender,
+            receiver=self.receiver,
+            channel=Message.Channel.SLACK,
+            intent=Message.Intent.REQUEST,
+            original_text=text,
+            final_text=text,
+            status=status,
+            created_at=created_at,
+            current_scores={"clarity": 60, "tone": 80, "receiver_fit": 75, "org_values_alignment": 65},
+        )
+        return message
+
+    def test_weekly_report_command_creates_report(self):
+        message = self._message()
+        InlineSuggestion.objects.create(
+            message=message,
+            target_text="Private",
+            suggested_replacement="Could you",
+            decision=InlineSuggestion.Decision.ACCEPTED,
+        )
+
+        out = StringIO()
+        call_command("weekly_team_communication_report", "--organization-id", str(self.org.id), stdout=out)
+
+        report = WeeklyCommunicationReport.objects.get(organization=self.org)
+        self.assertEqual(report.metrics["message_count"], 1)
+        self.assertEqual(report.metrics["accepted_suggestion_count"], 1)
+
+    def test_weekly_report_does_not_include_private_full_message_text(self):
+        private_text = "Private full message text with sensitive customer details"
+        self._message(text=private_text)
+
+        call_command("weekly_team_communication_report", "--organization-id", str(self.org.id), stdout=StringIO())
+
+        report = WeeklyCommunicationReport.objects.get(organization=self.org)
+        serialized = json.dumps({"metrics": report.metrics, "summary": report.summary})
+        self.assertNotIn(private_text, serialized)
+
+    def test_org_values_drift_check_creates_check(self):
+        self._message()
+
+        call_command("org_values_drift_check", "--organization-id", str(self.org.id), stdout=StringIO())
+
+        check = OrgValuesDriftCheck.objects.get(organization=self.org)
+        self.assertEqual(check.metrics["message_count"], 1)
+        self.assertEqual(check.metrics["average_scores"]["org_values_alignment"], 65)
+        self.assertEqual(check.warnings[0]["type"], "low_org_values_alignment")
+
+    def test_stale_feedback_reminder_creates_reminder(self):
+        message = self._message(days_old=9, status=Message.Status.SENT)
+
+        call_command("stale_feedback_reminder", "--organization-id", str(self.org.id), "--days", "7", stdout=StringIO())
+
+        reminder = FeedbackReminder.objects.get(message=message)
+        self.assertEqual(reminder.status, FeedbackReminder.Status.PENDING)
+        self.assertIn(f":{message.id}:", reminder.reminder_key)
+
+    def test_stale_feedback_reminder_deduplicates_reminders(self):
+        self._message(days_old=9, status=Message.Status.SENT)
+
+        call_command("stale_feedback_reminder", "--organization-id", str(self.org.id), "--days", "7", stdout=StringIO())
+        call_command("stale_feedback_reminder", "--organization-id", str(self.org.id), "--days", "7", stdout=StringIO())
+
+        self.assertEqual(FeedbackReminder.objects.count(), 1)
+
+    def test_onboarding_creates_default_receiver_prompt_only_when_missing(self):
+        employee = Employee.objects.create(
+            organization=self.org,
+            team=self.team,
+            name="New Hire",
+            role="Designer",
+            seniority_level="IC",
+        )
+
+        created = ensure_employee_onboarding(employee)
+        employee.refresh_from_db()
+
+        self.assertTrue(created)
+        self.assertIn("New Hire", employee.receiver_prompt)
+        self.assertIn("Designer", employee.receiver_prompt)
+        self.assertIn("Clarity", employee.receiver_prompt)
+
+    def test_onboarding_does_not_overwrite_existing_receiver_prompt(self):
+        employee = Employee.objects.create(
+            organization=self.org,
+            team=self.team,
+            name="Existing",
+            role="Designer",
+            receiver_prompt="Keep this exact prompt.",
+        )
+
+        created = ensure_employee_onboarding(employee)
+        employee.refresh_from_db()
+
+        self.assertFalse(created)
+        self.assertEqual(employee.receiver_prompt, "Keep this exact prompt.")
+
+    def test_import_employees_csv_is_idempotent(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="", encoding="utf-8") as temp:
+            temp.write("name,email,role,team,manager_email,seniority_level\n")
+            temp.write("Alex Kim,alex@example.com,Designer,Design,,IC\n")
+            path = temp.name
+
+        call_command("import_employees_csv", path, "--organization-id", str(self.org.id), stdout=StringIO())
+        call_command("import_employees_csv", path, "--organization-id", str(self.org.id), stdout=StringIO())
+
+        self.assertEqual(Employee.objects.filter(organization=self.org, email="alex@example.com").count(), 1)
+
+    def test_import_employees_csv_creates_teams_if_missing(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="", encoding="utf-8") as temp:
+            temp.write("name,email,role,team,manager_email,seniority_level\n")
+            temp.write("Casey Lee,casey@example.com,Analyst,Data Science,,IC\n")
+            path = temp.name
+
+        call_command("import_employees_csv", path, "--organization-id", str(self.org.id), stdout=StringIO())
+
+        self.assertTrue(Team.objects.filter(organization=self.org, name="Data Science").exists())
+        self.assertEqual(Employee.objects.get(email="casey@example.com").team.name, "Data Science")
+
+
+class WebhookTests(TransactionTestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name="Webhook Org")
+        self.team = Team.objects.create(organization=self.org, name="Engineering")
+        self.sender = Employee.objects.create(organization=self.org, team=self.team, name="Sender", role="PM")
+        self.receiver = Employee.objects.create(organization=self.org, team=self.team, name="Receiver", role="Engineer")
+        self.message = Message.objects.create(
+            organization=self.org,
+            sender=self.sender,
+            receiver=self.receiver,
+            channel=Message.Channel.SLACK,
+            intent=Message.Intent.REQUEST,
+            original_text="Message",
+            status=Message.Status.SENT,
+            created_at=timezone.now() - timezone.timedelta(days=10),
+            current_scores={"clarity": 80, "tone": 80, "receiver_fit": 80, "org_values_alignment": 80},
+        )
+
+    def _event(self, event_type="feedback.missing"):
+        return SystemEvent.objects.create(
+            organization=self.org,
+            message=self.message,
+            receiver=self.receiver,
+            event_type=event_type,
+            source="scheduler",
+            payload={"ok": True},
+        )
+
+    def _subscription(self, *, event_types=None, is_active=True):
+        return WebhookSubscription.objects.create(
+            organization=self.org,
+            name="n8n",
+            target_url="https://example.com/webhook",
+            secret="secret",
+            event_types=event_types or ["feedback.missing"],
+            is_active=is_active,
+        )
+
+    def test_sign_webhook_payload_is_deterministic(self):
+        payload = {"b": 2, "a": 1}
+
+        first = sign_webhook_payload(payload, "secret")
+        second = sign_webhook_payload({"a": 1, "b": 2}, "secret")
+
+        self.assertEqual(first, second)
+
+    @patch("comms.services.webhooks.requests.post")
+    def test_inactive_webhook_does_not_send(self, post):
+        self._subscription(is_active=False)
+
+        from comms.services.webhooks import deliver_event_to_webhooks
+        deliveries = deliver_event_to_webhooks(self._event())
+
+        self.assertEqual(deliveries, [])
+        post.assert_not_called()
+
+    @patch("comms.services.webhooks.requests.post")
+    def test_unmatched_event_type_does_not_send(self, post):
+        self._subscription(event_types=["weekly_report.generated"])
+
+        from comms.services.webhooks import deliver_event_to_webhooks
+        deliveries = deliver_event_to_webhooks(self._event("feedback.missing"))
+
+        self.assertEqual(deliveries, [])
+        post.assert_not_called()
+
+    @patch("comms.services.webhooks.requests.post")
+    def test_matching_active_webhook_sends_post(self, post):
+        self._subscription()
+        post.return_value.status_code = 200
+        post.return_value.text = "ok"
+
+        from comms.services.webhooks import deliver_event_to_webhooks
+        deliveries = deliver_event_to_webhooks(self._event())
+
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0].status, WebhookDelivery.Status.SUCCESS)
+        post.assert_called_once()
+        self.assertEqual(post.call_args.kwargs["headers"]["X-ReceiverAware-Event"], "feedback.missing")
+        self.assertIn("X-ReceiverAware-Signature", post.call_args.kwargs["headers"])
+
+    @patch("comms.services.webhooks.logger.warning")
+    @patch("comms.services.webhooks.requests.post")
+    def test_failed_webhook_creates_failed_delivery(self, post, warning):
+        self._subscription()
+        post.side_effect = RuntimeError("network down")
+
+        from comms.services.webhooks import deliver_event_to_webhooks
+        deliveries = deliver_event_to_webhooks(self._event())
+
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0].status, WebhookDelivery.Status.FAILED)
+        self.assertIn("network down", deliveries[0].error_message)
+
+    @patch("comms.services.webhooks.logger.warning")
+    @patch("comms.services.webhooks.requests.post")
+    def test_scheduled_command_still_succeeds_when_webhook_fails(self, post, warning):
+        self._subscription(event_types=["org_values_drift.checked"])
+        post.side_effect = RuntimeError("network down")
+
+        call_command("org_values_drift_check", "--organization-id", str(self.org.id), stdout=StringIO())
+
+        self.assertTrue(OrgValuesDriftCheck.objects.filter(organization=self.org).exists())
+        self.assertEqual(WebhookDelivery.objects.get().status, WebhookDelivery.Status.FAILED)
+
+    @patch("comms.services.webhooks.requests.post")
+    def test_stale_feedback_reminder_triggers_delivery_for_feedback_missing(self, post):
+        self._subscription(event_types=["feedback.missing"])
+        post.return_value.status_code = 200
+        post.return_value.text = "ok"
+
+        call_command("stale_feedback_reminder", "--organization-id", str(self.org.id), "--days", "7", stdout=StringIO())
+
+        self.assertEqual(WebhookDelivery.objects.count(), 1)
+        self.assertEqual(WebhookDelivery.objects.get().event.event_type, "feedback.missing")
+
+    @patch("comms.services.webhooks.requests.post")
+    def test_weekly_report_triggers_delivery_for_weekly_report_generated(self, post):
+        self._subscription(event_types=["weekly_report.generated"])
+        post.return_value.status_code = 200
+        post.return_value.text = "ok"
+
+        call_command("weekly_team_communication_report", "--organization-id", str(self.org.id), stdout=StringIO())
+
+        self.assertEqual(WebhookDelivery.objects.count(), 1)
+        self.assertEqual(WebhookDelivery.objects.get().event.event_type, "weekly_report.generated")
 
 class ApiTests(TestCase):
     def setUp(self):

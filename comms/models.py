@@ -195,3 +195,93 @@ class SystemEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.event_type} ({self.status})"
+
+
+class WeeklyCommunicationReport(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="weekly_communication_reports")
+    period_start = models.DateTimeField()
+    period_end = models.DateTimeField()
+    metrics = models.JSONField(default=dict, blank=True)
+    summary = models.TextField(blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-period_end", "organization__name"]
+
+    def __str__(self) -> str:
+        return f"{self.organization.name} weekly report ending {self.period_end:%Y-%m-%d}"
+
+
+class OrgValuesDriftCheck(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="org_values_drift_checks")
+    period_start = models.DateTimeField()
+    period_end = models.DateTimeField()
+    metrics = models.JSONField(default=dict, blank=True)
+    warnings = models.JSONField(default=list, blank=True)
+    summary = models.TextField(blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-period_end", "organization__name"]
+
+    def __str__(self) -> str:
+        return f"{self.organization.name} drift check ending {self.period_end:%Y-%m-%d}"
+
+
+class FeedbackReminder(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SENT = "sent", "Sent"
+        SKIPPED = "skipped", "Skipped"
+        FAILED = "failed", "Failed"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="feedback_reminders")
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="feedback_reminders")
+    receiver = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="feedback_reminders")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    reminder_key = models.CharField(max_length=160, unique=True)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.reminder_key} ({self.status})"
+
+
+class WebhookSubscription(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="webhook_subscriptions")
+    name = models.CharField(max_length=160)
+    target_url = models.TextField()
+    secret = models.CharField(max_length=255)
+    event_types = models.JSONField(default=list, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.organization.name})"
+
+
+class WebhookDelivery(models.Model):
+    class Status(models.TextChoices):
+        SUCCESS = "success", "Success"
+        FAILED = "failed", "Failed"
+        SKIPPED = "skipped", "Skipped"
+
+    subscription = models.ForeignKey(WebhookSubscription, on_delete=models.CASCADE, related_name="deliveries")
+    event = models.ForeignKey(SystemEvent, on_delete=models.SET_NULL, null=True, blank=True, related_name="webhook_deliveries")
+    status = models.CharField(max_length=20, choices=Status.choices)
+    request_payload = models.JSONField(default=dict, blank=True)
+    response_status_code = models.IntegerField(null=True, blank=True)
+    response_body = models.TextField(blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.subscription.name}: {self.status}"
