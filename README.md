@@ -40,6 +40,7 @@ NEBIUS_API_KEY=...
 NEBIUS_BASE_URL=https://api.studio.nebius.com/v1
 NEBIUS_MODEL=...
 COMMS_API_KEY=change-me
+COMMS_GMAIL_INTEGRATION_TOKEN=change-me-gmail-demo-token
 ```
 
 Run:
@@ -57,6 +58,27 @@ Open:
 http://127.0.0.1:8000/
 ```
 
+Gmail compose demo:
+
+```text
+http://127.0.0.1:8000/integrations/gmail/demo/
+```
+
+To test the Gmail demo with pseudo users after seeding, give two existing employees emails:
+
+```bash
+python manage.py shell -c "from comms.models import Employee; Employee.objects.filter(name='Rina Tal').update(email='rina@example.com'); Employee.objects.filter(name='Dana Weiss').update(email='dana@example.com')"
+```
+
+Then open the Gmail demo page and use:
+
+```text
+organization: Northstar Labs
+sender email: rina@example.com
+receiver email: dana@example.com
+intent: Request
+```
+
 ## Railway deployment
 
 Set these Railway variables:
@@ -71,6 +93,7 @@ NEBIUS_API_KEY=...
 NEBIUS_BASE_URL=https://api.studio.nebius.com/v1
 NEBIUS_MODEL=...
 COMMS_API_KEY=...
+COMMS_GMAIL_INTEGRATION_TOKEN=...
 ```
 
 Railway will use the `Procfile`:
@@ -150,6 +173,20 @@ curl -H "X-API-Key: $COMMS_API_KEY" -H "X-Org-Id: 1" \
 	-H "Content-Type: application/json" \
 	-d '{"org_id":1,"sender_id":1,"receiver_id":2,"channel":"slack","intent":"request","original_message":"Fix this."}' \
 	http://127.0.0.1:8000/api/v1/messages/analyze/
+```
+
+Gmail integration demo endpoints use `X-Gmail-Integration-Token`:
+
+```bash
+curl -H "X-Gmail-Integration-Token: $COMMS_GMAIL_INTEGRATION_TOKEN" \
+	http://127.0.0.1:8000/api/v1/integrations/gmail/health/
+```
+
+```bash
+curl -H "X-Gmail-Integration-Token: $COMMS_GMAIL_INTEGRATION_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"organization_id":1,"sender_email":"rina@example.com","receiver_email":"dana@example.com","receiver_name":"Dana Weiss","subject":"Status","body":"Fix this today.","intent":"request"}' \
+	http://127.0.0.1:8000/api/v1/integrations/gmail/analyze-draft/
 ```
 
 ## Integration stubs

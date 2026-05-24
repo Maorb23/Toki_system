@@ -4,6 +4,7 @@ from comms.models import Employee, Message, InlineSuggestion, MessageRevision
 from comms.services.llm_client import NebiusLLMClient
 from comms.services.prompt_builder import SYSTEM_PROMPT, build_message_analysis_prompt
 from comms.services.score_engine import normalize_scores
+from comms.services.event_log import log_event
 
 
 def _safe_text(value: Any) -> str:
@@ -187,4 +188,10 @@ class MessageAnalyzer:
                 org_values_used=item.get("org_values_used") or [],
             )
 
+        log_event(
+            "message.analyzed",
+            message=message,
+            source="app",
+            payload={"channel": channel, "intent": intent},
+        )
         return message

@@ -2,9 +2,13 @@
   const form = document.querySelector(".live-preview-form");
   if (!form) return;
 
-  const textarea = form.querySelector('textarea[name="original_message"]');
+  const textarea = form.querySelector('textarea[name="original_message"], textarea[name="body"]');
   const senderSelect = form.querySelector('select[name="sender_id"]');
+  const senderEmailInput = form.querySelector('input[name="sender_email"]');
   const receiverSelect = form.querySelector('select[name="receiver_id"]');
+  const receiverEmailInput = form.querySelector('input[name="receiver_email"]');
+  const receiverNameInput = form.querySelector('input[name="receiver_name"]');
+  const organizationSelect = form.querySelector('select[name="organization_id"]');
   const channelSelect = form.querySelector('select[name="channel"]');
   const intentSelect = form.querySelector('select[name="intent"]');
   const modeInputs = Array.from(form.querySelectorAll('input[name="suggestion_mode"]'));
@@ -18,9 +22,10 @@
   const scoreInput = form.querySelector('input[name="lightweight_scores"]');
   const csrfInput = form.querySelector('input[name="csrfmiddlewaretoken"]');
 
-  if (!textarea || !receiverSelect || !channelSelect || !intentSelect || !panel || !statusNode || !listNode || !draftShell || !draftHighlightNode || !draftSuggestionLayer) return;
+  if (!textarea || !intentSelect || !panel || !statusNode || !listNode || !draftShell || !draftHighlightNode || !draftSuggestionLayer) return;
 
-  const PREVIEW_DEBOUNCE_MS = 700;
+  const PREVIEW_DEBOUNCE_MS = Number(form.dataset.previewDebounceMs || 900);
+  const MIN_DRAFT_LENGTH = Number(form.dataset.minPreviewLength || 1);
   const SCORE_KEYS = ["clarity", "tone", "receiver_fit", "org_values_alignment"];
   const baseScores = {
     clarity: 80,
@@ -37,6 +42,7 @@
   let checkedRange = null;
   let anchoredSuggestions = [];
   const reviewedTextHashes = new Set();
+  const settledSuggestionKeys = new Set();
 
   modeInputs.forEach((input) => {
     input.addEventListener("change", syncMode);
@@ -44,10 +50,14 @@
   textarea.addEventListener("input", schedulePreview);
   textarea.addEventListener("scroll", syncDraftOverlay);
   window.addEventListener("resize", positionSuggestionChips);
-  receiverSelect.addEventListener("change", resetAndSchedulePreview);
-  channelSelect.addEventListener("change", resetAndSchedulePreview);
+  receiverSelect?.addEventListener("change", resetAndSchedulePreview);
+  receiverEmailInput?.addEventListener("change", resetAndSchedulePreview);
+  receiverNameInput?.addEventListener("change", resetAndSchedulePreview);
+  organizationSelect?.addEventListener("change", resetAndSchedulePreview);
+  channelSelect?.addEventListener("change", resetAndSchedulePreview);
   intentSelect.addEventListener("change", resetAndSchedulePreview);
   senderSelect?.addEventListener("change", resetAndSchedulePreview);
+  senderEmailInput?.addEventListener("change", resetAndSchedulePreview);
   renderScores();
   syncMode();
 
@@ -64,6 +74,7 @@
   }
 
   function currentMode() {
+    if (form.dataset.previewMode === "always") return "lightweight";
     return form.querySelector('input[name="suggestion_mode"]:checked')?.value || "full";
   }
 
@@ -77,6 +88,7 @@
   function resetAndSchedulePreview() {
     currentScores = { ...baseScores };
     reviewedTextHashes.clear();
+    settledSuggestionKeys.clear();
     lastChangedTextHash = "";
     checkedRange = null;
     anchoredSuggestions = [];
@@ -91,7 +103,12 @@
     const fullDraft = textarea.value || "";
     const changed = getChangedTextInfo(fullDraft);
     const changedText = changed.text;
-    if (!fullDraft.trim() || !changedText.trim()) {
+    if (fullDraft.trim().length < MIN_DRAFT_LENGTH) {
+      clearDraftAnnotations();
+      setStatus(`Type at least ${MIN_DRAFT_LENGTH} characters to preview suggestions.`);
+      return;
+    }
+    if (!changedText.trim()) {
       clearDraftAnnotations();
       setStatus("Type a sentence or paragraph to preview suggestions.");
       return;
@@ -100,7 +117,6 @@
     const changedHash = hashText(changedText);
     if (reviewedTextHashes.has(changedHash)) {
       checkedRange = { start: changed.start, end: changed.end };
-      anchoredSuggestions = [];
       renderDraftAnnotations();
       setStatus("This text was already checked. Keep typing to ask again.");
       return;
@@ -110,7 +126,6 @@
     activeRequest = new AbortController();
     lastChangedTextHash = changedHash;
     checkedRange = { start: changed.start, end: changed.end };
-    anchoredSuggestions = [];
     renderDraftAnnotations();
     setStatus("Checking changed text...");
 
@@ -122,15 +137,7 @@
           "X-CSRFToken": csrfInput?.value || "",
         },
         signal: activeRequest.signal,
-        body: JSON.stringify({
-          sender_id: getSenderId(),
-          receiver_id: receiverSelect.value,
-          channel: channelSelect.value,
-          intent: intentSelect.value,
-          full_draft: fullDraft,
-          changed_text: changedText,
-          surrounding_context: getSurroundingContext(fullDraft),
-        }),
+        body: JSON.stringify(buildPreviewPayload(fullDraft, changedText)),
       });
 
       if (!response.ok) {
@@ -151,6 +158,28 @@
 
   function getSenderId() {
     return form.dataset.senderId || senderSelect?.value || "";
+  }
+
+  function buildPreviewPayload(fullDraft, changedText) {
+    const payload = {
+      channel: channelSelect?.value || form.dataset.channel || "gmail",
+      intent: intentSelect.value,
+      full_draft: fullDraft,
+      changed_text: changedText,
+      surrounding_context: getSurroundingContext(fullDraft),
+    };
+
+    if (form.dataset.identityMode === "email") {
+      payload.organization_id = organizationSelect?.value || form.dataset.organizationId || "";
+      payload.sender_email = senderEmailInput?.value || "";
+      payload.receiver_email = receiverEmailInput?.value || "";
+      payload.receiver_name = receiverNameInput?.value || "";
+      return payload;
+    }
+
+    payload.sender_id = getSenderId();
+    payload.receiver_id = receiverSelect?.value || "";
+    return payload;
   }
 
   function getChangedTextInfo(text) {
@@ -209,20 +238,67 @@
     listNode.innerHTML = "";
     if (!suggestions.length) {
       if (lastChangedTextHash) reviewedTextHashes.add(lastChangedTextHash);
-      anchoredSuggestions = [];
       renderDraftAnnotations();
       setStatus("No lightweight suggestions for this pause.");
       return;
     }
 
-    anchoredSuggestions = suggestions
-      .map((suggestion, index) => ({ ...suggestion, _index: index, _range: resolveSuggestionRange(suggestion) }))
-      .filter((suggestion) => suggestion._range);
+    let nextIndex = nextSuggestionIndex();
+    const nextSuggestions = suggestions
+      .map((suggestion) => ({
+        ...suggestion,
+        _index: nextIndex++,
+        _range: resolveSuggestionRange(suggestion),
+      }))
+      .filter((suggestion) => suggestion._range && !settledSuggestionKeys.has(suggestionKey(suggestion)));
+    nextSuggestions.forEach((suggestion) => {
+      if (!hasMatchingSuggestion(suggestion)) {
+        anchoredSuggestions.push(suggestion);
+      }
+    });
+    sortAnchoredSuggestions();
     renderDraftAnnotations();
     setStatus(`${suggestions.length} lightweight suggestion${suggestions.length === 1 ? "" : "s"} - ${hash}`);
   }
 
+  function nextSuggestionIndex() {
+    const maxIndex = anchoredSuggestions.reduce((max, suggestion) => Math.max(max, suggestion._index || 0), -1);
+    return maxIndex + 1;
+  }
+
+  function hasMatchingSuggestion(candidate) {
+    return anchoredSuggestions.some((suggestion) => {
+      const candidateRange = candidate._range || {};
+      const suggestionRange = suggestion._range || {};
+      return (
+        suggestion.target_text === candidate.target_text &&
+        suggestion.suggested_replacement === candidate.suggested_replacement &&
+        suggestionRange.start === candidateRange.start &&
+        suggestionRange.end === candidateRange.end
+      );
+    });
+  }
+
+  function suggestionKey(suggestion) {
+    return [
+      suggestion.target_text || "",
+      suggestion.suggested_replacement || "",
+    ].join("\u0001");
+  }
+
+  function sortAnchoredSuggestions() {
+    anchoredSuggestions.sort((a, b) => {
+      const aStart = a._range?.start ?? Number.MAX_SAFE_INTEGER;
+      const bStart = b._range?.start ?? Number.MAX_SAFE_INTEGER;
+      return aStart - bStart || a._index - b._index;
+    });
+  }
+
   function dismissSuggestion(suggestionIndex) {
+    const dismissed = anchoredSuggestions.find((suggestion) => suggestion._index === suggestionIndex);
+    if (dismissed) {
+      settledSuggestionKeys.add(suggestionKey(dismissed));
+    }
     anchoredSuggestions = anchoredSuggestions.filter((suggestion) => suggestion._index !== suggestionIndex);
     renderDraftAnnotations();
     if (!anchoredSuggestions.length && lastChangedTextHash) {
@@ -235,6 +311,10 @@
     const draft = textarea.value || "";
     const target = suggestion.target_text || "";
     if (!target) return null;
+
+    if (suggestion._range && draft.slice(suggestion._range.start, suggestion._range.end) === target) {
+      return suggestion._range;
+    }
 
     if (checkedRange) {
       const checkedText = draft.slice(checkedRange.start, checkedRange.end);
@@ -267,14 +347,37 @@
     }
 
     textarea.value = draft.slice(0, absolute) + replacement + draft.slice(range.end);
+    settledSuggestionKeys.add(suggestionKey(suggestion));
+    shiftSuggestionRangesAfterEdit(range, replacement.length - (range.end - range.start), suggestion._index);
     lastPreviewDraft = textarea.value;
-    activeRequest?.abort();
     applyScoreDeltas(suggestion.affected_scores || {});
     checkedRange = null;
     anchoredSuggestions = anchoredSuggestions.filter((item) => item._index !== suggestion._index);
     renderDraftAnnotations();
     textarea.focus();
     setStatus("Suggestion accepted into draft.");
+  }
+
+  function shiftSuggestionRangesAfterEdit(editedRange, delta, acceptedIndex) {
+    anchoredSuggestions = anchoredSuggestions.map((suggestion) => {
+      if (suggestion._index === acceptedIndex || !suggestion._range) return suggestion;
+
+      if (suggestion._range.start >= editedRange.end) {
+        return {
+          ...suggestion,
+          _range: {
+            start: suggestion._range.start + delta,
+            end: suggestion._range.end + delta,
+          },
+        };
+      }
+
+      if (suggestion._range.end <= editedRange.start) {
+        return suggestion;
+      }
+
+      return { ...suggestion, _range: null };
+    });
   }
 
   function applyScoreDeltas(deltas) {
@@ -296,6 +399,7 @@
       ranges.push({ ...checkedRange, type: "checked" });
     }
     anchoredSuggestions.forEach((suggestion) => {
+      suggestion._range = resolveSuggestionRange(suggestion);
       if (suggestion._range && suggestion._range.end > suggestion._range.start) {
         ranges.push({ ...suggestion._range, type: "suggested", index: suggestion._index });
       }
@@ -334,9 +438,9 @@
 
   function renderSuggestionChips() {
     draftSuggestionLayer.innerHTML = anchoredSuggestions
-      .map((suggestion) => `
+      .map((suggestion, orderIndex) => `
         <div class="draft-suggestion-chip" data-chip-index="${suggestion._index}">
-          <strong>${escapeHtml(suggestion.issue || "Suggestion")}</strong>
+          <strong>${orderIndex + 1}. ${escapeHtml(suggestion.issue || "Suggestion")}</strong>
           <p>${escapeHtml(suggestion.reason || "")}</p>
           <div class="replacement">${escapeHtml(suggestion.suggested_replacement || "")}</div>
           <div class="suggestion-actions">
@@ -364,6 +468,9 @@
   function positionSuggestionChips() {
     if (currentMode() !== "lightweight") return;
     const shellRect = draftShell.getBoundingClientRect();
+    const placedRects = [];
+    const gap = 8;
+    sortAnchoredSuggestions();
     anchoredSuggestions.forEach((suggestion) => {
       const chip = draftSuggestionLayer.querySelector(`[data-chip-index="${suggestion._index}"]`);
       const marker = draftHighlightNode.querySelector(`[data-suggestion-index="${suggestion._index}"]`);
@@ -375,9 +482,29 @@
       if (top < 8) {
         top = markerRect.bottom - shellRect.top + 6;
       }
+      let candidate = rectForChip(left, top, chip);
+      placedRects.forEach((placed) => {
+        if (!rectsOverlap(candidate, placed)) return;
+        top = placed.bottom + gap;
+        candidate = rectForChip(left, top, chip);
+      });
       chip.style.left = `${left}px`;
       chip.style.top = `${top}px`;
+      placedRects.push(candidate);
     });
+  }
+
+  function rectForChip(left, top, chip) {
+    return {
+      left,
+      top,
+      right: left + chip.offsetWidth,
+      bottom: top + chip.offsetHeight,
+    };
+  }
+
+  function rectsOverlap(a, b) {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
   }
 
   function syncDraftOverlay() {

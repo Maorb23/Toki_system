@@ -8,6 +8,8 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from comms.models import Organization, Employee, Message, InlineSuggestion, ReceiverFeedback
+from comms.services.event_log import log_event
+from comms.services.gmail_demo import analyze_gmail_draft
 from comms.services.llm_client import NebiusConfigurationError, NebiusRuntimeError
 from comms.services.message_analyzer import MessageAnalyzer, LLMResponseValidationError
 from comms.services.score_engine import SCORE_KEYS, clamp_score, set_suggestion_decision, recalculate_scores, apply_accepted_suggestions, sync_suggestion_decisions
@@ -308,6 +310,11 @@ def _workspace(request: HttpRequest, *, org: Organization, employees, sender: Em
                 status=Message.Status.SENT,
                 sent_at=timezone.now(),
             )
+            log_event(
+                "message.sent",
+                message=message,
+                payload={"mode": "lightweight", "channel": channel, "intent": intent},
+            )
             messages.success(request, "Message marked as sent/received in the POC. Receiver can now provide feedback.")
             return redirect("comms:receiver_feedback", message_id=message.id)
 
@@ -392,6 +399,11 @@ def suggestion_decision(request: HttpRequest, message_id: int, suggestion_id: in
         return HttpResponseBadRequest(str(exc))
 
     message.refresh_from_db()
+    log_event(
+        f"suggestion.{suggestion.decision}",
+        message=message,
+        payload={"suggestion_id": suggestion.id, "decision": suggestion.decision},
+    )
     return JsonResponse({
         "ok": True,
         "decision": suggestion.decision,
@@ -418,6 +430,11 @@ def bulk_suggestion_decision(request: HttpRequest, message_id: int):
     sync_suggestion_decisions(message)
 
     message.refresh_from_db()
+    log_event(
+        f"bulk_suggestions.{decision}",
+        message=message,
+        payload={"decision": decision, "suggestion_count": message.suggestions.count()},
+    )
     return JsonResponse({
         "ok": True,
         "current_scores": message.current_scores,
@@ -433,6 +450,7 @@ def mark_message_sent(request: HttpRequest, message_id: int):
     message.status = Message.Status.SENT
     message.sent_at = timezone.now()
     message.save(update_fields=["status", "sent_at", "final_text", "current_scores"])
+    log_event("message.sent", message=message, payload={"channel": message.channel, "intent": message.intent})
     messages.success(request, "Message marked as sent/received in the POC. Receiver can now provide feedback.")
     return redirect("comms:receiver_feedback", message_id=message.id)
 
@@ -466,6 +484,13 @@ def receiver_feedback(request: HttpRequest, message_id: int):
         feedback.save(update_fields=["prompt_update_summary"])
         message.status = Message.Status.FEEDBACK_RECEIVED
         message.save(update_fields=["status"])
+        log_event(
+            "receiver_feedback.submitted",
+            message=message,
+            actor=message.receiver,
+            receiver=message.receiver,
+            payload={"feedback_id": feedback.id},
+        )
         messages.success(request, "Receiver feedback saved with the message. Receiver profile was not updated.")
         current_employee = _get_current_employee(request)
         if current_employee and current_employee.id == message.receiver_id:
@@ -475,5 +500,52 @@ def receiver_feedback(request: HttpRequest, message_id: int):
     return render(request, "comms/receiver_feedback.html", {
         "org": message.organization,
         "message": message,
+        "current_employee": _get_current_employee(request),
+    })
+
+
+def gmail_demo(request: HttpRequest):
+    orgs = _org_options()
+    org = _get_current_org(request) or (orgs[0] if orgs else None)
+    result = None
+    analysis_error = ""
+
+    if request.method == "POST":
+        form_data = request.POST.copy()
+        try:
+            message, result = analyze_gmail_draft(form_data, request=request)
+            log_event(
+                "gmail.draft_analyzed",
+                message=message,
+                source="gmail_demo",
+                payload={
+                    "subject": form_data.get("subject", ""),
+                    "sender_email": form_data.get("sender_email", ""),
+                    "receiver_email": form_data.get("receiver_email", ""),
+                },
+            )
+            org = message.organization
+        except Organization.DoesNotExist:
+            analysis_error = "Selected organization was not found."
+        except (NebiusConfigurationError, NebiusRuntimeError, LLMResponseValidationError, ValueError) as exc:
+            analysis_error = str(exc)
+    else:
+        form_data = {
+            "organization_id": org.id if org else "",
+            "sender_email": "",
+            "receiver_email": "",
+            "receiver_name": "",
+            "subject": "",
+            "body": "",
+            "intent": Message.Intent.REQUEST,
+        }
+
+    return render(request, "comms/gmail_demo.html", {
+        "org": org,
+        "orgs": orgs,
+        "intents": Message.Intent.choices,
+        "result": result,
+        "analysis_error": analysis_error,
+        "form_data": form_data,
         "current_employee": _get_current_employee(request),
     })

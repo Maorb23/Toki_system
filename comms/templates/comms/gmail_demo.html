@@ -1,0 +1,138 @@
+{% extends "comms/base.html" %}
+{% load static %}
+
+{% block content %}
+<section class="page-title">
+  <div>
+    <p class="eyebrow">Integration demo</p>
+    <h1>Gmail compose</h1>
+    <p class="hint">Analyze a draft using employee email matching and the existing receiver-aware analyzer.</p>
+  </div>
+</section>
+
+{% if analysis_error %}
+  <section class="error-panel">
+    <strong>Analysis failed</strong>
+    <p>{{ analysis_error }}</p>
+  </section>
+{% endif %}
+
+<section class="gmail-demo-shell">
+  <form
+    method="post"
+    class="gmail-compose live-preview-form"
+    data-preview-url="{% url 'comms:api_gmail_inline_suggestions_preview' %}"
+    data-preview-mode="always"
+    data-identity-mode="email"
+    data-channel="gmail"
+    data-preview-debounce-ms="900"
+    data-min-preview-length="20"
+  >
+    {% csrf_token %}
+    <div class="gmail-compose-header">
+      <strong>New Message</strong>
+    </div>
+
+    <label>
+      Organization
+      <select name="organization_id" required>
+        {% for option in orgs %}
+          <option value="{{ option.id }}" {% if form_data.organization_id|stringformat:"s" == option.id|stringformat:"s" %}selected{% endif %}>{{ option.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <div class="grid two">
+      <label>
+        Sender email
+        <input type="email" name="sender_email" value="{{ form_data.sender_email }}" placeholder="sender@example.com" required>
+      </label>
+      <label>
+        Receiver email
+        <input type="email" name="receiver_email" value="{{ form_data.receiver_email }}" placeholder="receiver@example.com" required>
+      </label>
+    </div>
+
+    <label>
+      Receiver name
+      <input type="text" name="receiver_name" value="{{ form_data.receiver_name }}" placeholder="Used only if the receiver is new">
+    </label>
+
+    <label>
+      Subject
+      <input type="text" name="subject" value="{{ form_data.subject }}" placeholder="Subject">
+    </label>
+
+    <div class="draft-field">
+      <label for="gmail-body">Body</label>
+      <div class="draft-inline-shell" data-draft-shell>
+        <div class="draft-highlight-layer" data-draft-highlight aria-hidden="true"></div>
+        <textarea id="gmail-body" name="body" rows="10" required>{{ form_data.body }}</textarea>
+        <div class="draft-suggestion-layer" data-draft-suggestion-layer></div>
+      </div>
+    </div>
+
+    <label>
+      Intent
+      <select name="intent" required>
+        {% for value, label in intents %}
+          <option value="{{ value }}" {% if form_data.intent == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <div class="actions">
+      <button class="button primary" type="submit">Analyze Draft</button>
+    </div>
+
+    <div class="live-preview-panel" data-live-preview-panel>
+      <div class="live-preview-status" data-live-preview-status>Pause typing for inline suggestions.</div>
+      <div class="live-preview-list" data-live-preview-list></div>
+    </div>
+  </form>
+
+  <aside class="gmail-results">
+    {% if result %}
+      <h2>Analysis</h2>
+      <div class="score-list">
+        {% for key, value in result.scores.current.items %}
+          <div>
+            <span>{{ key }}</span>
+            <progress max="100" value="{{ value }}"></progress>
+            <strong>{{ value }}</strong>
+          </div>
+        {% endfor %}
+      </div>
+
+      <h3>Suggestions</h3>
+      {% if result.suggestions %}
+        <ul class="clean-list">
+          {% for suggestion in result.suggestions %}
+            <li>
+              <strong>{{ suggestion.issue|default:"Suggestion" }}</strong>
+              <p>{{ suggestion.suggested_replacement }}</p>
+              <small class="hint">{{ suggestion.reason }}</small>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="hint">No inline suggestions returned.</p>
+      {% endif %}
+
+      <h3>Improved version</h3>
+      <div class="message-text">{{ result.improved_version }}</div>
+
+      <h3>Short version</h3>
+      <div class="message-text">{{ result.short_version }}</div>
+
+      <h3>Explanation</h3>
+      <p>{{ result.explanation }}</p>
+      <a class="button" href="{{ result.dashboard_url }}">Open message dashboard</a>
+    {% else %}
+      <h2>Analysis</h2>
+      <p class="hint">Results will appear here after analysis.</p>
+    {% endif %}
+  </aside>
+</section>
+<script src="{% static 'comms/live_preview.js' %}"></script>
+{% endblock %}

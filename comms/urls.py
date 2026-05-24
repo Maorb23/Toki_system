@@ -15,12 +15,14 @@ urlpatterns = [
     path("employee/sign-in/<int:employee_id>/", views.employee_sign_in, name="employee_sign_in"),
     path("employee/sign-out/", views.employee_sign_out, name="employee_sign_out"),
     path("employee/workspace/", views.employee_workspace, name="employee_workspace"),
+    path("integrations/gmail/demo/", views.gmail_demo, name="gmail_demo"),
     path("messages/<int:message_id>/", views.message_detail, name="message_detail"),
     path("messages/<int:message_id>/mark-sent/", views.mark_message_sent, name="mark_message_sent"),
     path("messages/<int:message_id>/receiver-feedback/", views.receiver_feedback, name="receiver_feedback"),
     path("api/messages/<int:message_id>/suggestions/<int:suggestion_id>/decision/", views.suggestion_decision, name="suggestion_decision"),
     path("api/messages/<int:message_id>/suggestions/bulk-decision/", views.bulk_suggestion_decision, name="bulk_suggestion_decision"),
     path("api/orgs/<int:org_id>/inline-suggestions/preview/", api.api_inline_suggestions_preview, name="api_inline_suggestions_preview"),
+    path("api/integrations/gmail/inline-suggestions/preview/", api.api_gmail_inline_suggestions_preview, name="api_gmail_inline_suggestions_preview"),
 
     path("api/v1/orgs/", api.api_list_orgs, name="api_list_orgs"),
     path("api/v1/orgs/<int:org_id>/teams/", api.api_list_teams, name="api_list_teams"),
@@ -31,4 +33,6 @@ urlpatterns = [
     path("api/v1/messages/<int:message_id>/suggestions/<int:suggestion_id>/decision/", api.api_suggestion_decision, name="api_suggestion_decision"),
     path("api/v1/messages/<int:message_id>/suggestions/bulk-decision/", api.api_bulk_suggestion_decision, name="api_bulk_suggestion_decision"),
     path("api/v1/messages/<int:message_id>/receiver-feedback/", api.api_receiver_feedback, name="api_receiver_feedback"),
+    path("api/v1/integrations/gmail/health/", api.api_gmail_health, name="api_gmail_health"),
+    path("api/v1/integrations/gmail/analyze-draft/", api.api_gmail_analyze_draft, name="api_gmail_analyze_draft"),
 ]

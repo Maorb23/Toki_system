@@ -1,5 +1,6 @@
 from django.test import TestCase
-from comms.models import Organization, Team, Employee, Message, InlineSuggestion, ReceiverFeedback, MessageRevision
+from comms.models import Organization, Team, Employee, Message, InlineSuggestion, ReceiverFeedback, MessageRevision, SystemEvent
+from comms.services.event_log import log_event
 from comms.services.score_engine import recalculate_scores, set_suggestion_decision, apply_accepted_suggestions
 from comms.services.feedback_processor import update_receiver_profile_from_feedback
 from comms.services.llm_client import NebiusLLMClient, NebiusConfigurationError
@@ -398,13 +399,50 @@ class OrgImportTests(TestCase):
         self.assertEqual(org.teams.count(), 1)
         self.assertEqual(org.employees.count(), 1)
 
+
+class SystemEventTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name="Event Org")
+        team = Team.objects.create(organization=self.org, name="Engineering")
+        self.sender = Employee.objects.create(organization=self.org, team=team, name="Sender", role="PM")
+        self.receiver = Employee.objects.create(organization=self.org, team=team, name="Receiver", role="Engineer")
+        self.message = Message.objects.create(
+            organization=self.org,
+            sender=self.sender,
+            receiver=self.receiver,
+            channel=Message.Channel.SLACK,
+            intent=Message.Intent.REQUEST,
+            original_text="Message",
+        )
+
+    def test_system_event_creation(self):
+        event = SystemEvent.objects.create(
+            organization=self.org,
+            actor=self.sender,
+            receiver=self.receiver,
+            message=self.message,
+            event_type="test.event",
+            payload={"ok": True},
+        )
+
+        self.assertEqual(event.source, "app")
+        self.assertEqual(event.status, "success")
+        self.assertEqual(event.payload["ok"], True)
+
+    def test_log_event_does_not_crash(self):
+        with patch("comms.services.event_log.SystemEvent.objects.create", side_effect=RuntimeError("db unavailable")), \
+             patch("comms.services.event_log.logger.exception"):
+            event = log_event("test.event", message=self.message)
+
+        self.assertIsNone(event)
+
 class ApiTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.org = Organization.objects.create(name="Api Org")
         team = Team.objects.create(organization=self.org, name="Engineering")
-        self.sender = Employee.objects.create(organization=self.org, team=team, name="Sender", role="PM")
-        self.receiver = Employee.objects.create(organization=self.org, team=team, name="Receiver", role="Engineer")
+        self.sender = Employee.objects.create(organization=self.org, team=team, name="Sender", email="sender@example.com", role="PM")
+        self.receiver = Employee.objects.create(organization=self.org, team=team, name="Receiver", email="receiver@example.com", role="Engineer")
 
     def _headers(self):
         return {"HTTP_X_API_KEY": "test-key", "HTTP_X_ORG_ID": str(self.org.id)}
@@ -508,3 +546,116 @@ class ApiTests(TestCase):
         self.assertEqual(len(body["suggestions"]), 1)
         self.assertEqual(body["suggestions"][0]["target_text"], "what is the deadline?")
         self.assertEqual(Message.objects.count(), before_count)
+
+    @patch("comms.api.InlineSuggestionPreviewer.preview")
+    def test_gmail_inline_preview_maps_emails_and_uses_gmail_channel(self, preview):
+        preview.return_value = {
+            "text_hash": "abc123",
+            "suggestions": [
+                {
+                    "target_text": "Fix this.",
+                    "suggested_replacement": "Could you fix this?",
+                    "issue": "Too blunt",
+                    "reason": "Softer",
+                    "affected_scores": {"tone": 8},
+                }
+            ],
+        }
+        payload = {
+            "organization_id": self.org.id,
+            "sender_email": "sender@example.com",
+            "receiver_email": "receiver@example.com",
+            "receiver_name": "Receiver",
+            "intent": Message.Intent.REQUEST,
+            "full_draft": "Fix this.",
+            "changed_text": "Fix this.",
+            "surrounding_context": "Fix this.",
+        }
+
+        response = self.client.post(
+            "/api/integrations/gmail/inline-suggestions/preview/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["sender_id"], self.sender.id)
+        self.assertEqual(body["receiver_id"], self.receiver.id)
+        preview.assert_called_once()
+        self.assertEqual(preview.call_args.kwargs["channel"], Message.Channel.GMAIL)
+
+    def _gmail_headers(self, token="gmail-token"):
+        return {"HTTP_X_GMAIL_INTEGRATION_TOKEN": token}
+
+    @override_settings(COMMS_GMAIL_INTEGRATION_TOKEN="gmail-token")
+    def test_gmail_health_endpoint(self):
+        response = self.client.get("/api/v1/integrations/gmail/health/", **self._gmail_headers())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["integration"], "gmail")
+
+    @override_settings(COMMS_GMAIL_INTEGRATION_TOKEN="gmail-token")
+    def test_gmail_analyze_rejects_invalid_token(self):
+        response = self.client.post(
+            "/api/v1/integrations/gmail/analyze-draft/",
+            data=json.dumps({}),
+            content_type="application/json",
+            **self._gmail_headers("wrong-token"),
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    @override_settings(COMMS_GMAIL_INTEGRATION_TOKEN="gmail-token")
+    @patch("comms.services.gmail_demo.MessageAnalyzer.analyze")
+    def test_gmail_analyze_maps_receiver_by_email_uses_gmail_and_calls_analyzer(self, analyze):
+        def create_message(*, sender, receiver, channel, intent, original_message):
+            message = Message.objects.create(
+                organization=self.org,
+                sender=sender,
+                receiver=receiver,
+                channel=channel,
+                intent=intent,
+                original_text=original_message,
+                final_text=original_message,
+                overall_suggested_message="Improved Gmail draft",
+                slack_short_version="Short draft",
+                scores_before={"clarity": 70, "tone": 70, "receiver_fit": 70, "org_values_alignment": 70},
+                estimated_scores_after_all={"clarity": 80, "tone": 80, "receiver_fit": 80, "org_values_alignment": 80},
+                current_scores={"clarity": 70, "tone": 70, "receiver_fit": 70, "org_values_alignment": 70},
+                explanation="Explanation",
+                status=Message.Status.ANALYZED,
+            )
+            InlineSuggestion.objects.create(
+                message=message,
+                target_text="Fix this.",
+                suggested_replacement="Could you fix this?",
+            )
+            return message
+
+        analyze.side_effect = create_message
+        payload = {
+            "organization_id": self.org.id,
+            "sender_email": "sender@example.com",
+            "receiver_email": "receiver@example.com",
+            "receiver_name": "Receiver",
+            "subject": "Status",
+            "body": "Fix this.",
+            "intent": Message.Intent.REQUEST,
+        }
+
+        response = self.client.post(
+            "/api/v1/integrations/gmail/analyze-draft/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            **self._gmail_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        message = Message.objects.get(channel=Message.Channel.GMAIL)
+        body = response.json()
+        self.assertEqual(message.receiver, self.receiver)
+        self.assertEqual(body["receiver_id"], self.receiver.id)
+        self.assertEqual(body["channel"], Message.Channel.GMAIL)
+        analyze.assert_called_once()
+        self.assertEqual(analyze.call_args.kwargs["channel"], Message.Channel.GMAIL)

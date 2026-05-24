@@ -6,6 +6,8 @@ from django.shortcuts import get_object_or_404
 from django.views.decorators.http import require_GET, require_POST
 from django.utils import timezone
 from comms.models import Organization, Team, Employee, Message, InlineSuggestion, ReceiverFeedback
+from comms.services.event_log import log_event
+from comms.services.gmail_demo import analyze_gmail_draft, get_gmail_demo_participants
 from comms.services.inline_preview import InlineSuggestionPreviewer
 from comms.services.message_analyzer import MessageAnalyzer, LLMResponseValidationError
 from comms.services.llm_client import NebiusConfigurationError, NebiusRuntimeError
@@ -23,6 +25,22 @@ def require_api_key(view_func):
         provided = request.headers.get("X-API-Key", "")
         if provided != api_key:
             return JsonResponse({"error": "Invalid API key"}, status=401)
+
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
+
+
+def require_gmail_integration_token(view_func):
+    @wraps(view_func)
+    def wrapper(request: HttpRequest, *args, **kwargs):
+        token = settings.COMMS_GMAIL_INTEGRATION_TOKEN
+        if not token:
+            return JsonResponse({"error": "COMMS_GMAIL_INTEGRATION_TOKEN is not configured"}, status=500)
+
+        provided = request.headers.get("X-Gmail-Integration-Token", "")
+        if provided != token:
+            return JsonResponse({"error": "Invalid Gmail integration token"}, status=401)
 
         return view_func(request, *args, **kwargs)
 
@@ -75,6 +93,7 @@ def serialize_employee(employee: Employee) -> dict:
     return {
         "id": employee.id,
         "name": employee.name,
+        "email": employee.email,
         "role": employee.role,
         "team_id": employee.team_id,
         "team_name": employee.team.name if employee.team else None,
@@ -166,6 +185,44 @@ def api_inline_suggestions_preview(request: HttpRequest, org_id: int):
     except (NebiusConfigurationError, NebiusRuntimeError, LLMResponseValidationError, ValueError) as exc:
         return JsonResponse({"error": f"Inline preview failed: {exc}"}, status=400)
 
+    return JsonResponse(preview)
+
+
+@require_POST
+def api_gmail_inline_suggestions_preview(request: HttpRequest):
+    try:
+        payload = parse_json(request)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    full_draft = payload.get("full_draft") or ""
+    changed_text = (payload.get("changed_text") or "").strip()
+    surrounding_context = payload.get("surrounding_context") or ""
+    intent = payload.get("intent")
+
+    if not all([full_draft, changed_text, intent]):
+        return JsonResponse({"error": "body, changed_text, and intent are required"}, status=400)
+
+    try:
+        org, sender, receiver, receiver_created = get_gmail_demo_participants(payload)
+        preview = InlineSuggestionPreviewer().preview(
+            sender=sender,
+            receiver=receiver,
+            channel=Message.Channel.GMAIL,
+            intent=intent,
+            full_draft=full_draft,
+            changed_text=changed_text,
+            surrounding_context=surrounding_context,
+        )
+    except Organization.DoesNotExist:
+        return JsonResponse({"error": "Selected organization was not found."}, status=404)
+    except (NebiusConfigurationError, NebiusRuntimeError, LLMResponseValidationError, ValueError) as exc:
+        return JsonResponse({"error": f"Gmail inline preview failed: {exc}"}, status=400)
+
+    preview["receiver_created"] = receiver_created
+    preview["receiver_id"] = receiver.id
+    preview["sender_id"] = sender.id
+    preview["organization_id"] = org.id
     return JsonResponse(preview)
 
 
@@ -302,6 +359,11 @@ def api_suggestion_decision(request: HttpRequest, message_id: int, suggestion_id
         return JsonResponse({"error": str(exc)}, status=400)
 
     message.refresh_from_db()
+    log_event(
+        f"suggestion.{suggestion.decision}",
+        message=message,
+        payload={"suggestion_id": suggestion.id, "decision": suggestion.decision},
+    )
     return JsonResponse({
         "ok": True,
         "decision": suggestion.decision,
@@ -334,6 +396,11 @@ def api_bulk_suggestion_decision(request: HttpRequest, message_id: int):
     sync_suggestion_decisions(message)
 
     message.refresh_from_db()
+    log_event(
+        f"bulk_suggestions.{decision}",
+        message=message,
+        payload={"decision": decision, "suggestion_count": message.suggestions.count()},
+    )
     return JsonResponse({
         "ok": True,
         "current_scores": message.current_scores,
@@ -378,6 +445,13 @@ def api_receiver_feedback(request: HttpRequest, message_id: int):
 
     update_receiver_profile_from_feedback(feedback)
     receiver.refresh_from_db()
+    log_event(
+        "receiver_feedback.submitted",
+        message=message,
+        actor=receiver,
+        receiver=receiver,
+        payload={"feedback_id": feedback.id},
+    )
 
     return JsonResponse({
         "ok": True,
@@ -387,3 +461,37 @@ def api_receiver_feedback(request: HttpRequest, message_id: int):
         "receiver_prompt_after": feedback.receiver_prompt_after,
         "receiver_profile": serialize_employee(receiver),
     })
+
+
+@require_GET
+@require_gmail_integration_token
+def api_gmail_health(request: HttpRequest):
+    return JsonResponse({"ok": True, "integration": "gmail", "status": "ready"})
+
+
+@require_POST
+@require_gmail_integration_token
+def api_gmail_analyze_draft(request: HttpRequest):
+    try:
+        payload = parse_json(request)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    try:
+        message, response = analyze_gmail_draft(payload, request=request)
+    except Organization.DoesNotExist:
+        return JsonResponse({"error": "organization_id was not found"}, status=404)
+    except (NebiusConfigurationError, NebiusRuntimeError, LLMResponseValidationError, ValueError) as exc:
+        return JsonResponse({"error": f"Gmail draft analysis failed: {exc}"}, status=400)
+
+    log_event(
+        "gmail.draft_analyzed",
+        message=message,
+        source="gmail",
+        payload={
+            "subject": payload.get("subject", ""),
+            "sender_email": payload.get("sender_email", ""),
+            "receiver_email": payload.get("receiver_email", ""),
+        },
+    )
+    return JsonResponse(response)

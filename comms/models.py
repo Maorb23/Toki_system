@@ -37,6 +37,7 @@ class Employee(models.Model):
     manager = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="direct_reports")
 
     name = models.CharField(max_length=120)
+    email = models.EmailField(blank=True)
     role = models.CharField(max_length=160)
     seniority_level = models.CharField(max_length=80, blank=True)
 
@@ -174,3 +175,23 @@ class ReceiverFeedback(models.Model):
 
     def __str__(self) -> str:
         return f"Feedback from {self.receiver.name} on message {self.message_id}"
+
+
+class SystemEvent(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.SET_NULL, null=True, blank=True, related_name="system_events")
+    actor = models.ForeignKey(Employee, on_delete=models.SET_NULL, null=True, blank=True, related_name="actor_events")
+    receiver = models.ForeignKey(Employee, on_delete=models.SET_NULL, null=True, blank=True, related_name="receiver_events")
+    message = models.ForeignKey(Message, on_delete=models.SET_NULL, null=True, blank=True, related_name="system_events")
+
+    event_type = models.CharField(max_length=120)
+    source = models.CharField(max_length=80, default="app")
+    status = models.CharField(max_length=40, default="success")
+    payload = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.event_type} ({self.status})"

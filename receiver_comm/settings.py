@@ -97,3 +97,4 @@ NEBIUS_BASE_URL = os.getenv("NEBIUS_BASE_URL", "https://api.studio.nebius.com/v1
 NEBIUS_MODEL = os.getenv("NEBIUS_MODEL", "")
 
 COMMS_API_KEY = os.getenv("COMMS_API_KEY", "")
+COMMS_GMAIL_INTEGRATION_TOKEN = os.getenv("COMMS_GMAIL_INTEGRATION_TOKEN", "")

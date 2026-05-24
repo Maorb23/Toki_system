@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Organization, OrgValue, Team, Employee, Message, InlineSuggestion, ReceiverFeedback
+from .models import Organization, OrgValue, Team, Employee, Message, InlineSuggestion, ReceiverFeedback, SystemEvent
 
 @admin.register(Organization)
 class OrganizationAdmin(admin.ModelAdmin):
@@ -15,8 +15,8 @@ class TeamAdmin(admin.ModelAdmin):
 
 @admin.register(Employee)
 class EmployeeAdmin(admin.ModelAdmin):
-    list_display = ("name", "role", "team", "manager")
-    search_fields = ("name", "role")
+    list_display = ("name", "email", "role", "team", "manager")
+    search_fields = ("name", "email", "role")
 
 class InlineSuggestionInline(admin.TabularInline):
     model = InlineSuggestion
@@ -31,3 +31,9 @@ class MessageAdmin(admin.ModelAdmin):
 @admin.register(ReceiverFeedback)
 class ReceiverFeedbackAdmin(admin.ModelAdmin):
     list_display = ("id", "message", "receiver", "sender", "created_at")
+
+@admin.register(SystemEvent)
+class SystemEventAdmin(admin.ModelAdmin):
+    list_display = ("id", "event_type", "organization", "actor", "receiver", "message", "source", "status", "created_at")
+    list_filter = ("event_type", "source", "status", "created_at")
+    search_fields = ("event_type", "error_message")
