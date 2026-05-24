@@ -12,11 +12,13 @@
   const statusNode = form.querySelector("[data-live-preview-status]");
   const listNode = form.querySelector("[data-live-preview-list]");
   const scoreListNode = form.querySelector("[data-live-score-list]");
-  const checkedTextNode = form.querySelector("[data-live-checked-text]");
+  const draftShell = form.querySelector("[data-draft-shell]");
+  const draftHighlightNode = form.querySelector("[data-draft-highlight]");
+  const draftSuggestionLayer = form.querySelector("[data-draft-suggestion-layer]");
   const scoreInput = form.querySelector('input[name="lightweight_scores"]');
   const csrfInput = form.querySelector('input[name="csrfmiddlewaretoken"]');
 
-  if (!textarea || !receiverSelect || !channelSelect || !intentSelect || !panel || !statusNode || !listNode) return;
+  if (!textarea || !receiverSelect || !channelSelect || !intentSelect || !panel || !statusNode || !listNode || !draftShell || !draftHighlightNode || !draftSuggestionLayer) return;
 
   const PREVIEW_DEBOUNCE_MS = 700;
   const SCORE_KEYS = ["clarity", "tone", "receiver_fit", "org_values_alignment"];
@@ -32,12 +34,16 @@
   let activeRequest = null;
   let currentScores = { ...baseScores };
   let lastChangedTextHash = "";
+  let checkedRange = null;
+  let anchoredSuggestions = [];
   const reviewedTextHashes = new Set();
 
   modeInputs.forEach((input) => {
     input.addEventListener("change", syncMode);
   });
   textarea.addEventListener("input", schedulePreview);
+  textarea.addEventListener("scroll", syncDraftOverlay);
+  window.addEventListener("resize", positionSuggestionChips);
   receiverSelect.addEventListener("change", resetAndSchedulePreview);
   channelSelect.addEventListener("change", resetAndSchedulePreview);
   intentSelect.addEventListener("change", resetAndSchedulePreview);
@@ -50,7 +56,10 @@
     form.classList.toggle("is-lightweight", lightweight);
     if (lightweight) {
       setStatus("Pause typing for lightweight suggestions.");
+      renderDraftAnnotations();
       schedulePreview();
+    } else {
+      clearDraftAnnotations();
     }
   }
 
@@ -69,7 +78,10 @@
     currentScores = { ...baseScores };
     reviewedTextHashes.clear();
     lastChangedTextHash = "";
+    checkedRange = null;
+    anchoredSuggestions = [];
     renderScores();
+    renderDraftAnnotations();
     schedulePreview();
   }
 
@@ -77,17 +89,19 @@
     if (currentMode() !== "lightweight") return;
 
     const fullDraft = textarea.value || "";
-    const changedText = getChangedText(fullDraft);
+    const changed = getChangedTextInfo(fullDraft);
+    const changedText = changed.text;
     if (!fullDraft.trim() || !changedText.trim()) {
-      listNode.innerHTML = "";
-      renderCheckedText("");
+      clearDraftAnnotations();
       setStatus("Type a sentence or paragraph to preview suggestions.");
       return;
     }
 
     const changedHash = hashText(changedText);
     if (reviewedTextHashes.has(changedHash)) {
-      renderCheckedText(changedText);
+      checkedRange = { start: changed.start, end: changed.end };
+      anchoredSuggestions = [];
+      renderDraftAnnotations();
       setStatus("This text was already checked. Keep typing to ask again.");
       return;
     }
@@ -95,7 +109,9 @@
     activeRequest?.abort();
     activeRequest = new AbortController();
     lastChangedTextHash = changedHash;
-    renderCheckedText(changedText);
+    checkedRange = { start: changed.start, end: changed.end };
+    anchoredSuggestions = [];
+    renderDraftAnnotations();
     setStatus("Checking changed text...");
 
     try {
@@ -137,10 +153,15 @@
     return form.dataset.senderId || senderSelect?.value || "";
   }
 
-  function getChangedText(text) {
-    if (!lastPreviewDraft) return text.trim();
+  function getChangedTextInfo(text) {
+    if (!lastPreviewDraft) {
+      const trimmedStart = text.search(/\S/);
+      const start = trimmedStart < 0 ? 0 : trimmedStart;
+      const end = text.trimEnd().length;
+      return { text: text.slice(start, end).trim(), start, end };
+    }
     const diff = changedRange(lastPreviewDraft, text);
-    if (diff.start === diff.end) return "";
+    if (diff.start === diff.end) return { text: "", start: diff.start, end: diff.end };
 
     let start = diff.start;
     let end = diff.end;
@@ -150,7 +171,15 @@
     while (end < text.length && /\S/.test(text[end]) && !/[.!?\n]/.test(text[end])) {
       end += 1;
     }
-    return text.slice(start, end).trim();
+    const raw = text.slice(start, end);
+    const leadingWhitespace = raw.search(/\S/);
+    const normalizedStart = leadingWhitespace < 0 ? start : start + leadingWhitespace;
+    const normalizedEnd = start + raw.trimEnd().length;
+    return {
+      text: text.slice(normalizedStart, normalizedEnd).trim(),
+      start: normalizedStart,
+      end: normalizedEnd,
+    };
   }
 
   function getSurroundingContext(text) {
@@ -180,78 +209,70 @@
     listNode.innerHTML = "";
     if (!suggestions.length) {
       if (lastChangedTextHash) reviewedTextHashes.add(lastChangedTextHash);
+      anchoredSuggestions = [];
+      renderDraftAnnotations();
       setStatus("No lightweight suggestions for this pause.");
       return;
     }
 
+    anchoredSuggestions = suggestions
+      .map((suggestion, index) => ({ ...suggestion, _index: index, _range: resolveSuggestionRange(suggestion) }))
+      .filter((suggestion) => suggestion._range);
+    renderDraftAnnotations();
     setStatus(`${suggestions.length} lightweight suggestion${suggestions.length === 1 ? "" : "s"} - ${hash}`);
-    suggestions.forEach((suggestion, index) => {
-      const item = document.createElement("div");
-      item.className = "live-preview-item";
-      item.innerHTML = `
-        <strong>${escapeHtml(suggestion.issue || "Suggestion")}</strong>
-        <p>${escapeHtml(suggestion.reason || "")}</p>
-        <div class="replacement">${escapeHtml(suggestion.suggested_replacement || "")}</div>
-        ${renderScoreDeltas(suggestion.affected_scores || {})}
-        <div class="suggestion-actions">
-          <button class="button primary" type="button" data-index="${index}">Accept</button>
-          <button class="button" type="button" data-dismiss="${index}">Dismiss</button>
-        </div>
-      `;
-
-      item.querySelector("[data-index]")?.addEventListener("click", () => acceptSuggestion(suggestion, item));
-      item.querySelector("[data-dismiss]")?.addEventListener("click", () => dismissSuggestion(item));
-      listNode.appendChild(item);
-    });
   }
 
-  function dismissSuggestion(item) {
-    item.remove();
-    if (!listNode.children.length && lastChangedTextHash) {
+  function dismissSuggestion(suggestionIndex) {
+    anchoredSuggestions = anchoredSuggestions.filter((suggestion) => suggestion._index !== suggestionIndex);
+    renderDraftAnnotations();
+    if (!anchoredSuggestions.length && lastChangedTextHash) {
       reviewedTextHashes.add(lastChangedTextHash);
       setStatus("Suggestions dismissed. This text will not be checked again unless it changes.");
     }
   }
 
-  function renderScoreDeltas(scores) {
-    const entries = Object.entries(scores);
-    if (!entries.length) return "";
-    return `<ul class="score-deltas">${entries
-      .map(([key, value]) => `<li><strong>${escapeHtml(titleCase(key))}:</strong> ${Number(value)}</li>`)
-      .join("")}</ul>`;
+  function resolveSuggestionRange(suggestion) {
+    const draft = textarea.value || "";
+    const target = suggestion.target_text || "";
+    if (!target) return null;
+
+    if (checkedRange) {
+      const checkedText = draft.slice(checkedRange.start, checkedRange.end);
+      const checkedOffset = checkedText.indexOf(target);
+      if (checkedOffset >= 0) {
+        return {
+          start: checkedRange.start + checkedOffset,
+          end: checkedRange.start + checkedOffset + target.length,
+        };
+      }
+    }
+
+    const fallback = draft.indexOf(target);
+    if (fallback < 0) return null;
+    return { start: fallback, end: fallback + target.length };
   }
 
-  function acceptSuggestion(suggestion, item) {
+  function acceptSuggestion(suggestion) {
     const target = suggestion.target_text || "";
     const replacement = suggestion.suggested_replacement || "";
     if (!target || !replacement) return;
 
     const draft = textarea.value;
-    const cursor = textarea.selectionStart ?? draft.length;
-    const paragraphStart = draft.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
-    const nextBreak = draft.indexOf("\n", cursor);
-    const paragraphEnd = nextBreak === -1 ? draft.length : nextBreak;
-    const paragraph = draft.slice(paragraphStart, paragraphEnd);
-    let found = paragraph.indexOf(target);
-    let absolute = -1;
-
-    if (found >= 0) {
-      absolute = paragraphStart + found;
-    } else {
-      found = draft.indexOf(target);
-      absolute = found;
-    }
+    const range = suggestion._range || resolveSuggestionRange(suggestion);
+    const absolute = range ? range.start : -1;
 
     if (absolute < 0) {
       setStatus("Suggestion target no longer matches the draft.");
       return;
     }
 
-    textarea.value = draft.slice(0, absolute) + replacement + draft.slice(absolute + target.length);
+    textarea.value = draft.slice(0, absolute) + replacement + draft.slice(range.end);
     lastPreviewDraft = textarea.value;
     activeRequest?.abort();
     applyScoreDeltas(suggestion.affected_scores || {});
-    item.remove();
+    checkedRange = null;
+    anchoredSuggestions = anchoredSuggestions.filter((item) => item._index !== suggestion._index);
+    renderDraftAnnotations();
     textarea.focus();
     setStatus("Suggestion accepted into draft.");
   }
@@ -261,6 +282,115 @@
       currentScores[key] = clampScore(Number(currentScores[key] || 0) + Number(deltas[key] || 0));
     });
     renderScores();
+  }
+
+  function renderDraftAnnotations() {
+    const draft = textarea.value || "";
+    if (!draft || currentMode() !== "lightweight") {
+      clearDraftAnnotations();
+      return;
+    }
+
+    const ranges = [];
+    if (checkedRange && checkedRange.end > checkedRange.start) {
+      ranges.push({ ...checkedRange, type: "checked" });
+    }
+    anchoredSuggestions.forEach((suggestion) => {
+      if (suggestion._range && suggestion._range.end > suggestion._range.start) {
+        ranges.push({ ...suggestion._range, type: "suggested", index: suggestion._index });
+      }
+    });
+
+    renderHighlightLayer(draft, ranges);
+    renderSuggestionChips();
+    syncDraftOverlay();
+  }
+
+  function renderHighlightLayer(draft, ranges) {
+    const boundaries = new Set([0, draft.length]);
+    ranges.forEach((range) => {
+      boundaries.add(clampIndex(range.start, draft.length));
+      boundaries.add(clampIndex(range.end, draft.length));
+    });
+
+    const points = Array.from(boundaries).sort((a, b) => a - b);
+    draftHighlightNode.innerHTML = points
+      .slice(0, -1)
+      .map((start, index) => {
+        const end = points[index + 1];
+        const text = draft.slice(start, end);
+        const active = ranges.filter((range) => start >= range.start && end <= range.end);
+        const classes = ["draft-mark"];
+        if (active.some((range) => range.type === "checked")) classes.push("checked");
+        const suggestion = active.find((range) => range.type === "suggested");
+        if (suggestion) classes.push("suggested");
+        const data = suggestion ? ` data-suggestion-index="${suggestion.index}"` : "";
+        return active.length
+          ? `<span class="${classes.join(" ")}"${data}>${escapeHtml(text)}</span>`
+          : escapeHtml(text);
+      })
+      .join("") || "&nbsp;";
+  }
+
+  function renderSuggestionChips() {
+    draftSuggestionLayer.innerHTML = anchoredSuggestions
+      .map((suggestion) => `
+        <div class="draft-suggestion-chip" data-chip-index="${suggestion._index}">
+          <strong>${escapeHtml(suggestion.issue || "Suggestion")}</strong>
+          <p>${escapeHtml(suggestion.reason || "")}</p>
+          <div class="replacement">${escapeHtml(suggestion.suggested_replacement || "")}</div>
+          <div class="suggestion-actions">
+            <button class="button primary" type="button" data-accept-inline="${suggestion._index}">Accept</button>
+            <button class="button" type="button" data-dismiss-inline="${suggestion._index}">Dismiss</button>
+          </div>
+        </div>
+      `)
+      .join("");
+
+    draftSuggestionLayer.querySelectorAll("[data-accept-inline]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const index = Number(button.dataset.acceptInline);
+        const suggestion = anchoredSuggestions.find((item) => item._index === index);
+        if (suggestion) acceptSuggestion(suggestion);
+      });
+    });
+    draftSuggestionLayer.querySelectorAll("[data-dismiss-inline]").forEach((button) => {
+      button.addEventListener("click", () => dismissSuggestion(Number(button.dataset.dismissInline)));
+    });
+
+    positionSuggestionChips();
+  }
+
+  function positionSuggestionChips() {
+    if (currentMode() !== "lightweight") return;
+    const shellRect = draftShell.getBoundingClientRect();
+    anchoredSuggestions.forEach((suggestion) => {
+      const chip = draftSuggestionLayer.querySelector(`[data-chip-index="${suggestion._index}"]`);
+      const marker = draftHighlightNode.querySelector(`[data-suggestion-index="${suggestion._index}"]`);
+      if (!chip || !marker) return;
+
+      const markerRect = marker.getBoundingClientRect();
+      const left = Math.max(8, Math.min(markerRect.left - shellRect.left, draftShell.clientWidth - chip.offsetWidth - 8));
+      let top = markerRect.top - shellRect.top - chip.offsetHeight - 8;
+      if (top < 8) {
+        top = markerRect.bottom - shellRect.top + 6;
+      }
+      chip.style.left = `${left}px`;
+      chip.style.top = `${top}px`;
+    });
+  }
+
+  function syncDraftOverlay() {
+    draftHighlightNode.scrollTop = textarea.scrollTop;
+    draftHighlightNode.scrollLeft = textarea.scrollLeft;
+    positionSuggestionChips();
+  }
+
+  function clearDraftAnnotations() {
+    checkedRange = null;
+    anchoredSuggestions = [];
+    draftHighlightNode.innerHTML = "";
+    draftSuggestionLayer.innerHTML = "";
   }
 
   function renderScores() {
@@ -280,17 +410,13 @@
     }).join("");
   }
 
-  function renderCheckedText(value) {
-    if (!checkedTextNode) return;
-    checkedTextNode.classList.toggle("has-content", Boolean(value));
-    checkedTextNode.innerHTML = value
-      ? `<span>Checked text</span><p>${escapeHtml(value)}</p>`
-      : "";
-  }
-
   function clampScore(value) {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(100, Math.round(value)));
+  }
+
+  function clampIndex(value, max) {
+    return Math.max(0, Math.min(max, Number(value) || 0));
   }
 
   function setStatus(value) {

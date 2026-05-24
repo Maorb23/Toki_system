@@ -67,9 +67,14 @@
     </fieldset>
 
     <div class="compose-with-scores">
-      <label>Draft message
-        <textarea name="original_message" rows="10" required placeholder="Paste the draft message here...">{{ form_data.original_message }}</textarea>
-      </label>
+      <div class="draft-field">
+        <label for="original-message">Draft message</label>
+        <div class="draft-inline-shell" data-draft-shell>
+          <div class="draft-highlight-layer" data-draft-highlight aria-hidden="true"></div>
+          <textarea id="original-message" name="original_message" rows="10" required placeholder="Paste the draft message here...">{{ form_data.original_message }}</textarea>
+          <div class="draft-suggestion-layer" data-draft-suggestion-layer></div>
+        </div>
+      </div>
 
       <aside class="live-score-panel" data-live-score-panel>
         <h2>Scores</h2>
@@ -80,7 +85,6 @@
 
     <div class="live-preview-panel" data-live-preview-panel>
       <div class="live-preview-status" data-live-preview-status>Pause typing for lightweight suggestions.</div>
-      <div class="live-checked-text" data-live-checked-text></div>
       <div class="live-preview-list" data-live-preview-list></div>
     </div>
 
