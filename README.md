@@ -252,6 +252,43 @@ To redeliver one event while debugging:
 python manage.py deliver_webhook_event --event-id 123
 ```
 
+## Receiver Profile Refresh Approval Flow
+
+Receiver profile refresh is intentionally approval-based. The system creates pending proposals only; it does not automatically overwrite `Employee.receiver_prompt`.
+
+Generate pending proposals from recent receiver feedback and suggestion decisions:
+
+```bash
+python manage.py monthly_receiver_profile_refresh
+python manage.py monthly_receiver_profile_refresh --organization-id 1
+```
+
+Review and approve/reject proposals in Django admin:
+
+```text
+http://127.0.0.1:8000/admin/comms/receiverprofilerefreshproposal/
+```
+
+The proposal command uses:
+- receiver feedback counts and common feedback flags
+- accepted inline suggestion counts
+- rejected inline suggestion counts
+
+Approval applies only the proposal's safe fields:
+- `receiver_prompt_additions`, appended under a marked section
+- `communication_preferences_updates`, merged into existing preferences
+- `pain_points_updates`, appended without duplicates
+
+Rejection does not change the employee profile.
+
+Webhook event:
+
+```text
+receiver_profile.refresh_proposed
+```
+
+Use this event in n8n/Zapier to notify an admin or manager that a receiver profile refresh proposal is waiting for review.
+
 ## REST API (v1)
 
 All API endpoints require `X-API-Key` and an `X-Org-Id` header (or `org_id` query/body).

@@ -9,6 +9,7 @@ from comms.models import (
     OrgValuesDriftCheck,
     Organization,
     ReceiverFeedback,
+    ReceiverProfileRefreshProposal,
     SystemEvent,
     Team,
     WebhookDelivery,
@@ -17,6 +18,7 @@ from comms.models import (
 )
 from comms.services.event_log import log_event
 from comms.services.onboarding import ensure_employee_onboarding
+from comms.services.profile_refresh import approve_profile_refresh_proposal, reject_profile_refresh_proposal
 from comms.services.score_engine import recalculate_scores, set_suggestion_decision, apply_accepted_suggestions
 from comms.services.webhooks import sign_webhook_payload
 from comms.services.feedback_processor import update_receiver_profile_from_feedback
@@ -727,6 +729,150 @@ class WebhookTests(TransactionTestCase):
 
         self.assertEqual(WebhookDelivery.objects.count(), 1)
         self.assertEqual(WebhookDelivery.objects.get().event.event_type, "weekly_report.generated")
+
+
+class ReceiverProfileRefreshTests(TransactionTestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name="Profile Org")
+        self.team = Team.objects.create(organization=self.org, name="Engineering")
+        self.sender = Employee.objects.create(organization=self.org, team=self.team, name="Sender", role="PM")
+        self.receiver = Employee.objects.create(
+            organization=self.org,
+            team=self.team,
+            name="Receiver",
+            role="Engineer",
+            receiver_prompt="Original prompt.",
+            communication_preferences={"style": "direct"},
+            pain_points=["unclear requirements"],
+        )
+        self.message = Message.objects.create(
+            organization=self.org,
+            sender=self.sender,
+            receiver=self.receiver,
+            channel=Message.Channel.SLACK,
+            intent=Message.Intent.REQUEST,
+            original_text="Message",
+            current_scores={"clarity": 70, "tone": 70, "receiver_fit": 70, "org_values_alignment": 70},
+        )
+
+    def _create_evidence(self):
+        ReceiverFeedback.objects.create(
+            message=self.message,
+            sender=self.sender,
+            receiver=self.receiver,
+            too_long=True,
+            unclear_ask=True,
+            free_text="Please make asks clearer.",
+        )
+        InlineSuggestion.objects.create(
+            message=self.message,
+            target_text="Message",
+            suggested_replacement="Clear message",
+            decision=InlineSuggestion.Decision.ACCEPTED,
+            decided_at=timezone.now(),
+        )
+
+    def _proposal(self):
+        return ReceiverProfileRefreshProposal.objects.create(
+            organization=self.org,
+            receiver=self.receiver,
+            proposed_changes={
+                "receiver_prompt_additions": "Use concise requests with explicit next steps.",
+                "communication_preferences_updates": {"structure": "clear ask and next step"},
+                "pain_points_updates": ["Requests may be unclear without explicit next steps."],
+            },
+            explanation="Test proposal",
+            evidence_summary={"feedback_count": 1},
+        )
+
+    def test_monthly_command_creates_pending_receiver_profile_refresh_proposal(self):
+        self._create_evidence()
+
+        call_command("monthly_receiver_profile_refresh", "--organization-id", str(self.org.id), stdout=StringIO())
+
+        proposal = ReceiverProfileRefreshProposal.objects.get(receiver=self.receiver)
+        self.assertEqual(proposal.status, ReceiverProfileRefreshProposal.Status.PENDING)
+        self.assertEqual(proposal.evidence_summary["feedback_count"], 1)
+
+    def test_monthly_command_does_not_overwrite_receiver_prompt(self):
+        self._create_evidence()
+
+        call_command("monthly_receiver_profile_refresh", "--organization-id", str(self.org.id), stdout=StringIO())
+
+        self.receiver.refresh_from_db()
+        self.assertEqual(self.receiver.receiver_prompt, "Original prompt.")
+
+    def test_monthly_command_avoids_duplicate_pending_proposal_for_same_receiver_month(self):
+        self._create_evidence()
+
+        call_command("monthly_receiver_profile_refresh", "--organization-id", str(self.org.id), stdout=StringIO())
+        call_command("monthly_receiver_profile_refresh", "--organization-id", str(self.org.id), stdout=StringIO())
+
+        self.assertEqual(ReceiverProfileRefreshProposal.objects.filter(receiver=self.receiver).count(), 1)
+
+    def test_approval_appends_prompt_additions_once(self):
+        proposal = self._proposal()
+
+        approve_profile_refresh_proposal(proposal, reviewed_by=self.sender)
+        approve_profile_refresh_proposal(proposal, reviewed_by=self.sender)
+
+        self.receiver.refresh_from_db()
+        self.assertEqual(self.receiver.receiver_prompt.count("Use concise requests"), 1)
+        proposal.refresh_from_db()
+        self.assertEqual(proposal.status, ReceiverProfileRefreshProposal.Status.APPROVED)
+
+    def test_approval_updates_communication_preferences_safely(self):
+        proposal = self._proposal()
+
+        approve_profile_refresh_proposal(proposal, reviewed_by=self.sender)
+
+        self.receiver.refresh_from_db()
+        self.assertEqual(self.receiver.communication_preferences["style"], "direct")
+        self.assertEqual(self.receiver.communication_preferences["structure"], "clear ask and next step")
+
+    def test_approval_logs_receiver_profile_refresh_approved(self):
+        proposal = self._proposal()
+
+        approve_profile_refresh_proposal(proposal, reviewed_by=self.sender)
+
+        self.assertTrue(SystemEvent.objects.filter(event_type="receiver_profile.refresh_approved").exists())
+
+    def test_approval_is_idempotent(self):
+        proposal = self._proposal()
+
+        first = approve_profile_refresh_proposal(proposal, reviewed_by=self.sender)
+        second = approve_profile_refresh_proposal(first, reviewed_by=self.sender)
+
+        self.assertEqual(first.id, second.id)
+        self.receiver.refresh_from_db()
+        self.assertEqual(self.receiver.receiver_prompt.count("[Receiver profile refresh proposal"), 1)
+
+    def test_rejection_does_not_change_employee(self):
+        proposal = self._proposal()
+        before_prompt = self.receiver.receiver_prompt
+
+        reject_profile_refresh_proposal(proposal, reviewed_by=self.sender)
+
+        self.receiver.refresh_from_db()
+        self.assertEqual(self.receiver.receiver_prompt, before_prompt)
+        proposal.refresh_from_db()
+        self.assertEqual(proposal.status, ReceiverProfileRefreshProposal.Status.REJECTED)
+
+    def test_cannot_reject_approved_proposal(self):
+        proposal = self._proposal()
+        approve_profile_refresh_proposal(proposal, reviewed_by=self.sender)
+
+        with self.assertRaises(ValueError):
+            reject_profile_refresh_proposal(proposal, reviewed_by=self.sender)
+
+    @patch("comms.management.commands.monthly_receiver_profile_refresh.deliver_event_to_webhooks")
+    def test_webhook_delivery_called_for_receiver_profile_refresh_proposed(self, deliver):
+        self._create_evidence()
+        deliver.return_value = []
+
+        call_command("monthly_receiver_profile_refresh", "--organization-id", str(self.org.id), stdout=StringIO())
+
+        deliver.assert_called_once()
 
 class ApiTests(TestCase):
     def setUp(self):

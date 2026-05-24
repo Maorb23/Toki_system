@@ -285,3 +285,33 @@ class WebhookDelivery(models.Model):
 
     def __str__(self) -> str:
         return f"{self.subscription.name}: {self.status}"
+
+
+class ReceiverProfileRefreshProposal(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="receiver_profile_refresh_proposals")
+    receiver = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="profile_refresh_proposals")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    proposed_changes = models.JSONField(default=dict, blank=True)
+    explanation = models.TextField(blank=True)
+    evidence_summary = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        Employee,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_profile_refresh_proposals",
+    )
+    applied_payload = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.receiver.name} profile refresh ({self.status})"

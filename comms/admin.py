@@ -8,12 +8,14 @@ from .models import (
     OrgValuesDriftCheck,
     Organization,
     ReceiverFeedback,
+    ReceiverProfileRefreshProposal,
     SystemEvent,
     Team,
     WebhookDelivery,
     WebhookSubscription,
     WeeklyCommunicationReport,
 )
+from comms.services.profile_refresh import approve_profile_refresh_proposal, reject_profile_refresh_proposal
 
 @admin.register(Organization)
 class OrganizationAdmin(admin.ModelAdmin):
@@ -79,3 +81,34 @@ class WebhookDeliveryAdmin(admin.ModelAdmin):
     list_display = ("id", "subscription", "event", "status", "response_status_code", "error_message", "created_at")
     list_filter = ("status", "response_status_code", "created_at", "subscription__organization")
     search_fields = ("subscription__name", "error_message", "response_body")
+
+@admin.action(description="Approve selected pending profile refresh proposals")
+def approve_profile_refresh_proposals(modeladmin, request, queryset):
+    approved = 0
+    skipped = 0
+    for proposal in queryset:
+        if proposal.status != ReceiverProfileRefreshProposal.Status.PENDING:
+            skipped += 1
+            continue
+        approve_profile_refresh_proposal(proposal)
+        approved += 1
+    modeladmin.message_user(request, f"Approved {approved} proposal(s); skipped {skipped}.")
+
+@admin.action(description="Reject selected pending profile refresh proposals")
+def reject_profile_refresh_proposals(modeladmin, request, queryset):
+    rejected = 0
+    skipped = 0
+    for proposal in queryset:
+        if proposal.status != ReceiverProfileRefreshProposal.Status.PENDING:
+            skipped += 1
+            continue
+        reject_profile_refresh_proposal(proposal)
+        rejected += 1
+    modeladmin.message_user(request, f"Rejected {rejected} proposal(s); skipped {skipped}.")
+
+@admin.register(ReceiverProfileRefreshProposal)
+class ReceiverProfileRefreshProposalAdmin(admin.ModelAdmin):
+    list_display = ("id", "organization", "receiver", "status", "created_at", "reviewed_at")
+    list_filter = ("organization", "status", "created_at")
+    search_fields = ("receiver__name", "receiver__email", "explanation")
+    actions = [approve_profile_refresh_proposals, reject_profile_refresh_proposals]
