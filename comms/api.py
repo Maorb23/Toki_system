@@ -4,6 +4,7 @@ from django.conf import settings
 from django.http import JsonResponse, HttpRequest
 from django.shortcuts import get_object_or_404
 from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from comms.models import Organization, Team, Employee, Message, InlineSuggestion, ReceiverFeedback
 from comms.services.event_log import log_event
@@ -224,6 +225,13 @@ def api_gmail_inline_suggestions_preview(request: HttpRequest):
     preview["sender_id"] = sender.id
     preview["organization_id"] = org.id
     return JsonResponse(preview)
+
+
+@csrf_exempt
+@require_POST
+@require_gmail_integration_token
+def api_gmail_inline_suggestions_preview_v1(request: HttpRequest):
+    return api_gmail_inline_suggestions_preview(request)
 
 
 @require_GET
@@ -469,6 +477,7 @@ def api_gmail_health(request: HttpRequest):
     return JsonResponse({"ok": True, "integration": "gmail", "status": "ready"})
 
 
+@csrf_exempt
 @require_POST
 @require_gmail_integration_token
 def api_gmail_analyze_draft(request: HttpRequest):

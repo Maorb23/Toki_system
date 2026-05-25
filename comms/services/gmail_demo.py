@@ -71,6 +71,7 @@ def analyze_gmail_draft(payload: dict, *, request: HttpRequest | None = None) ->
 
     dashboard_path = reverse("comms:message_detail", args=[message.id])
     dashboard_url = request.build_absolute_uri(dashboard_path) if request else dashboard_path
+    dashboard_absolute_url = request.build_absolute_uri(dashboard_path) if request else dashboard_path
     suggestions = [
         {
             "id": suggestion.id,
@@ -100,4 +101,5 @@ def analyze_gmail_draft(payload: dict, *, request: HttpRequest | None = None) ->
         "short_version": message.slack_short_version or message.teams_short_version,
         "explanation": message.explanation,
         "dashboard_url": dashboard_url,
+        "dashboard_absolute_url": dashboard_absolute_url,
     }

@@ -874,6 +874,17 @@ class ReceiverProfileRefreshTests(TransactionTestCase):
 
         deliver.assert_called_once()
 
+
+class GmailAppsScriptDemoTests(TestCase):
+    def test_seed_gmail_demo_org_is_idempotent(self):
+        call_command("seed_gmail_demo_org", stdout=StringIO())
+        call_command("seed_gmail_demo_org", stdout=StringIO())
+
+        org = Organization.objects.get(name="Acme Demo Org")
+        self.assertEqual(Employee.objects.filter(organization=org, email="sender@acme.test").count(), 1)
+        self.assertEqual(Employee.objects.filter(organization=org, email="receiver@acme.test").count(), 1)
+        self.assertEqual(org.values.count(), 3)
+
 class ApiTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -1023,6 +1034,43 @@ class ApiTests(TestCase):
         preview.assert_called_once()
         self.assertEqual(preview.call_args.kwargs["channel"], Message.Channel.GMAIL)
 
+    @override_settings(COMMS_GMAIL_INTEGRATION_TOKEN="gmail-token")
+    def test_gmail_inline_preview_v1_rejects_invalid_token(self):
+        response = self.client.post(
+            "/api/v1/integrations/gmail/inline-suggestions/preview/",
+            data=json.dumps({}),
+            content_type="application/json",
+            **self._gmail_headers("wrong-token"),
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    @override_settings(COMMS_GMAIL_INTEGRATION_TOKEN="gmail-token")
+    @patch("comms.api.InlineSuggestionPreviewer.preview")
+    def test_gmail_inline_preview_v1_is_csrf_exempt_for_apps_script(self, preview):
+        preview.return_value = {"text_hash": "abc123", "suggestions": []}
+        csrf_client = Client(enforce_csrf_checks=True)
+        payload = {
+            "organization_id": self.org.id,
+            "sender_email": "sender@example.com",
+            "receiver_email": "receiver@example.com",
+            "receiver_name": "Receiver",
+            "intent": Message.Intent.REQUEST,
+            "full_draft": "Could you review this today?",
+            "changed_text": "Could you review this today?",
+            "surrounding_context": "Could you review this today?",
+        }
+
+        response = csrf_client.post(
+            "/api/v1/integrations/gmail/inline-suggestions/preview/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            **self._gmail_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        preview.assert_called_once()
+
     def _gmail_headers(self, token="gmail-token"):
         return {"HTTP_X_GMAIL_INTEGRATION_TOKEN": token}
 
@@ -1046,7 +1094,7 @@ class ApiTests(TestCase):
 
     @override_settings(COMMS_GMAIL_INTEGRATION_TOKEN="gmail-token")
     @patch("comms.services.gmail_demo.MessageAnalyzer.analyze")
-    def test_gmail_analyze_maps_receiver_by_email_uses_gmail_and_calls_analyzer(self, analyze):
+    def test_gmail_analyze_maps_receiver_by_email_uses_gmail_calls_analyzer_and_returns_absolute_dashboard_url(self, analyze):
         def create_message(*, sender, receiver, channel, intent, original_message):
             message = Message.objects.create(
                 organization=self.org,
@@ -1095,5 +1143,47 @@ class ApiTests(TestCase):
         self.assertEqual(message.receiver, self.receiver)
         self.assertEqual(body["receiver_id"], self.receiver.id)
         self.assertEqual(body["channel"], Message.Channel.GMAIL)
+        self.assertIn("dashboard_absolute_url", body)
+        self.assertTrue(body["dashboard_absolute_url"].startswith("http://testserver/messages/"))
         analyze.assert_called_once()
         self.assertEqual(analyze.call_args.kwargs["channel"], Message.Channel.GMAIL)
+
+    @override_settings(COMMS_GMAIL_INTEGRATION_TOKEN="gmail-token")
+    @patch("comms.services.gmail_demo.MessageAnalyzer.analyze")
+    def test_gmail_analyze_is_csrf_exempt_for_server_to_server_addon_calls(self, analyze):
+        def create_message(*, sender, receiver, channel, intent, original_message):
+            return Message.objects.create(
+                organization=self.org,
+                sender=sender,
+                receiver=receiver,
+                channel=channel,
+                intent=intent,
+                original_text=original_message,
+                final_text=original_message,
+                scores_before={"clarity": 70, "tone": 70, "receiver_fit": 70, "org_values_alignment": 70},
+                estimated_scores_after_all={"clarity": 80, "tone": 80, "receiver_fit": 80, "org_values_alignment": 80},
+                current_scores={"clarity": 70, "tone": 70, "receiver_fit": 70, "org_values_alignment": 70},
+                status=Message.Status.ANALYZED,
+            )
+
+        analyze.side_effect = create_message
+        csrf_client = Client(enforce_csrf_checks=True)
+        payload = {
+            "organization_id": self.org.id,
+            "sender_email": "sender@example.com",
+            "receiver_email": "receiver@example.com",
+            "receiver_name": "Receiver",
+            "subject": "Status",
+            "body": "Fix this.",
+            "intent": Message.Intent.REQUEST,
+        }
+
+        response = csrf_client.post(
+            "/api/v1/integrations/gmail/analyze-draft/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            **self._gmail_headers(),
+        )
+
+        self.assertNotEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)

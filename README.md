@@ -64,6 +64,18 @@ Gmail compose demo:
 http://127.0.0.1:8000/integrations/gmail/demo/
 ```
 
+Gmail Apps Script / Workspace Add-on demo files:
+
+```text
+docs/gmail_apps_script_demo/
+```
+
+For a Gmail-side demo, seed the Acme demo organization and users:
+
+```bash
+python manage.py seed_gmail_demo_org
+```
+
 To test the Gmail demo with pseudo users after seeding, give two existing employees emails:
 
 ```bash

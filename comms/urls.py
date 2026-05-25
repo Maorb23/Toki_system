@@ -35,4 +35,5 @@ urlpatterns = [
     path("api/v1/messages/<int:message_id>/receiver-feedback/", api.api_receiver_feedback, name="api_receiver_feedback"),
     path("api/v1/integrations/gmail/health/", api.api_gmail_health, name="api_gmail_health"),
     path("api/v1/integrations/gmail/analyze-draft/", api.api_gmail_analyze_draft, name="api_gmail_analyze_draft"),
+    path("api/v1/integrations/gmail/inline-suggestions/preview/", api.api_gmail_inline_suggestions_preview_v1, name="api_gmail_inline_suggestions_preview_v1"),
 ]
