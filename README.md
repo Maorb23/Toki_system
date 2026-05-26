@@ -70,6 +70,12 @@ Gmail Apps Script / Workspace Add-on demo files:
 docs/gmail_apps_script_demo/
 ```
 
+Gmail Chrome extension demo files:
+
+```text
+docs/gmail_chrome_extension_demo/
+```
+
 For a Gmail-side demo, seed the Acme demo organization and users:
 
 ```bash

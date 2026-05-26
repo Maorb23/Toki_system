@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Receiver-Aware Gmail Demo Options</title>
+  <link rel="stylesheet" href="content.css">
+  <style>
+    body {
+      max-width: 720px;
+      margin: 32px auto;
+      padding: 0 20px;
+      font-family: Arial, sans-serif;
+      color: #202124;
+    }
+    label {
+      display: block;
+      font-weight: 700;
+      margin: 16px 0;
+    }
+    input {
+      display: block;
+      width: 100%;
+      margin-top: 6px;
+      padding: 10px;
+      border: 1px solid #dadce0;
+      border-radius: 6px;
+      font: inherit;
+    }
+    button {
+      border: 0;
+      border-radius: 6px;
+      padding: 10px 14px;
+      background: #5b6ee1;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    #status {
+      margin-top: 14px;
+      color: #137333;
+    }
+  </style>
+</head>
+<body>
+  <h1>Receiver-Aware Gmail Demo</h1>
+  <p>Configure the Django backend used by the Gmail content script. Do not store production secrets here.</p>
+
+  <label>
+    Backend URL
+    <input id="backendUrl" placeholder="https://your-ngrok-or-railway-url">
+  </label>
+  <label>
+    Gmail integration token
+    <input id="integrationToken" placeholder="COMMS_GMAIL_INTEGRATION_TOKEN">
+  </label>
+  <label>
+    Organization ID
+    <input id="organizationId" placeholder="1">
+  </label>
+  <label>
+    Default sender email
+    <input id="senderEmail" placeholder="rina@northstar.test">
+  </label>
+
+  <button id="save">Save</button>
+  <div id="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

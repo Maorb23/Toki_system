@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Receiver-Aware Gmail Demo",
+  "version": "0.1.0",
+  "description": "Demo Chrome extension that previews receiver-aware suggestions inside Gmail compose.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://mail.google.com/*", "https://*/*", "http://127.0.0.1:8000/*", "http://localhost:8000/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
