@@ -1,0 +1,18 @@
+graph TD
+    START((START)) --> input_normalizer
+    input_normalizer --> message_router
+    message_router --> route_decision
+    route_decision -- bypass --> final_response
+    route_decision -- validate_only --> typo_cleanup
+    route_decision -- "rewrite + typos" --> typo_cleanup
+    route_decision -- "rewrite_with_context + typos" --> typo_cleanup
+    typo_cleanup -- validate_only --> final_response
+    typo_cleanup -- rewrite --> communication_agent
+    typo_cleanup -- rewrite_with_context --> tool_selector
+    route_decision -- rewrite --> communication_agent
+    communication_agent --> final_validator
+    final_validator --> final_response
+    route_decision -- rewrite_with_context --> tool_selector
+    tool_selector --> context_tools
+    context_tools --> communication_agent
+    final_response --> END((END))

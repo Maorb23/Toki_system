@@ -48,5 +48,55 @@
       "pain_points": ["vague technical claims"],
       "receiver_prompt": "Be technically precise and surface blockers early."
     }
+  ],
+  "context": {
+    "operating_context": {
+      "market": "Internal platform tooling for operations teams.",
+      "stage": "Pilot rollout with executive visibility.",
+      "planning_horizon": "Current quarter"
+    },
+    "current_priorities": [
+      "Stabilize the Q3 launch plan",
+      "Clarify owners for reliability and customer-impact updates"
+    ],
+    "communication_patterns": [
+      "Lead with the decision or blocker",
+      "Name the owner, deadline, and customer impact"
+    ],
+    "customer_segments": ["Internal operations teams", "Executive sponsors"],
+    "known_constraints": ["Engineering capacity is limited during reliability hardening"]
+  },
+  "projects": [
+    {
+      "name": "Q3 Launch Readiness",
+      "description": "Prepare the internal platform launch plan and reliability checklist.",
+      "status": "active",
+      "priority": "high",
+      "quarter": "Q3",
+      "team": "Engineering",
+      "owner": "Sam Ortiz",
+      "goals": ["Close launch blockers", "Clarify executive update format"],
+      "risks": ["Unclear ownership could delay the pilot"],
+      "dependencies": ["Reliability checklist", "Executive decision memo"],
+      "stakeholders": ["Jordan Lee", "Sam Ortiz"]
+    }
+  ],
+  "meetings": [
+    {
+      "title": "Q3 Launch Standup",
+      "meeting_type": "launch_review",
+      "cadence": "Weekly on Wednesday",
+      "status": "recurring",
+      "team": "Engineering",
+      "owner": "Sam Ortiz",
+      "participants": ["Jordan Lee", "Sam Ortiz"],
+      "related_projects": ["Q3 Launch Readiness"],
+      "summary": "Review launch blockers, reliability risks, and executive decisions.",
+      "decisions": ["Use concise owner/deadline/action format for launch updates"],
+      "open_questions": ["Which launch risks need executive escalation?"],
+      "action_items": [
+        {"owner": "Sam Ortiz", "task": "Send reliability blocker summary", "status": "open"}
+      ]
+    }
   ]
 }

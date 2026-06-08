@@ -26,6 +26,7 @@
 
   const PREVIEW_DEBOUNCE_MS = Number(form.dataset.previewDebounceMs || 900);
   const MIN_DRAFT_LENGTH = Number(form.dataset.minPreviewLength || 1);
+  const MIN_CHANGED_TEXT_LENGTH = Number(form.dataset.minChangedPreviewLength || 8);
   const SCORE_KEYS = ["clarity", "tone", "receiver_fit", "org_values_alignment"];
   const baseScores = {
     clarity: 80,
@@ -36,11 +37,13 @@
 
   let lastPreviewDraft = textarea.value || "";
   let debounceTimer = null;
-  let activeRequest = null;
+  const activeRequests = new Map();
   let currentScores = { ...baseScores };
   let lastChangedTextHash = "";
-  let checkedRange = null;
-  let anchoredSuggestions = [];
+  let nextReviewId = 1;
+  let nextSuggestionId = 1;
+  let reviewWindows = [];
+  let priorReviewContext = [];
   const reviewedTextHashes = new Set();
   const settledSuggestionKeys = new Set();
 
@@ -81,6 +84,8 @@
   function schedulePreview() {
     if (currentMode() !== "lightweight") return;
     clearTimeout(debounceTimer);
+    reconcileReviewWindows();
+    renderDraftAnnotations();
     setStatus("Waiting for typing pause...");
     debounceTimer = setTimeout(runPreview, PREVIEW_DEBOUNCE_MS);
   }
@@ -90,8 +95,11 @@
     reviewedTextHashes.clear();
     settledSuggestionKeys.clear();
     lastChangedTextHash = "";
-    checkedRange = null;
-    anchoredSuggestions = [];
+    nextReviewId = 1;
+    nextSuggestionId = 1;
+    reviewWindows = [];
+    priorReviewContext = [];
+    abortActiveRequests();
     renderScores();
     renderDraftAnnotations();
     schedulePreview();
@@ -104,28 +112,33 @@
     const changed = getChangedTextInfo(fullDraft);
     const changedText = changed.text;
     if (fullDraft.trim().length < MIN_DRAFT_LENGTH) {
-      clearDraftAnnotations();
+      if (!fullDraft.trim()) clearDraftAnnotations();
       setStatus(`Type at least ${MIN_DRAFT_LENGTH} characters to preview suggestions.`);
       return;
     }
     if (!changedText.trim()) {
-      clearDraftAnnotations();
+      renderDraftAnnotations();
       setStatus("Type a sentence or paragraph to preview suggestions.");
+      return;
+    }
+    if (!isReviewableChangedText(changedText, fullDraft, changed)) {
+      renderDraftAnnotations();
+      setStatus("Waiting for a complete phrase before checking...");
       return;
     }
 
     const changedHash = hashText(changedText);
     if (reviewedTextHashes.has(changedHash)) {
-      checkedRange = { start: changed.start, end: changed.end };
       renderDraftAnnotations();
       setStatus("This text was already checked. Keep typing to ask again.");
       return;
     }
 
-    activeRequest?.abort();
-    activeRequest = new AbortController();
+    const reviewWindow = createReviewWindow(changed, changedHash);
+    const controller = new AbortController();
+    activeRequests.set(reviewWindow.id, controller);
     lastChangedTextHash = changedHash;
-    checkedRange = { start: changed.start, end: changed.end };
+    lastPreviewDraft = fullDraft;
     renderDraftAnnotations();
     setStatus("Checking changed text...");
 
@@ -136,8 +149,8 @@
           "Content-Type": "application/json",
           "X-CSRFToken": csrfInput?.value || "",
         },
-        signal: activeRequest.signal,
-        body: JSON.stringify(buildPreviewPayload(fullDraft, changedText)),
+        signal: controller.signal,
+        body: JSON.stringify(buildPreviewPayload(fullDraft, changedText, changed)),
       });
 
       if (!response.ok) {
@@ -147,12 +160,16 @@
       }
 
       const data = await response.json();
-      lastPreviewDraft = fullDraft;
-      renderSuggestions(data.suggestions || [], data.text_hash || "");
+      if (!findReviewWindow(reviewWindow.id)) return;
+      renderSuggestions(data.suggestions || [], data.text_hash || "", reviewWindow.id);
     } catch (error) {
       if (error.name !== "AbortError") {
+        removeReviewWindow(reviewWindow.id);
+        renderDraftAnnotations();
         setStatus("Lightweight preview failed.");
       }
+    } finally {
+      activeRequests.delete(reviewWindow.id);
     }
   }
 
@@ -160,13 +177,14 @@
     return form.dataset.senderId || senderSelect?.value || "";
   }
 
-  function buildPreviewPayload(fullDraft, changedText) {
+  function buildPreviewPayload(fullDraft, changedText, changedRangeInfo) {
     const payload = {
       channel: channelSelect?.value || form.dataset.channel || "gmail",
       intent: intentSelect.value,
       full_draft: fullDraft,
       changed_text: changedText,
-      surrounding_context: getSurroundingContext(fullDraft),
+      surrounding_context: getSurroundingContext(fullDraft, changedRangeInfo),
+      prior_review_context: buildPriorReviewContext(),
     };
 
     if (form.dataset.identityMode === "email") {
@@ -194,10 +212,10 @@
 
     let start = diff.start;
     let end = diff.end;
-    while (start > 0 && /\S/.test(text[start - 1]) && !/[.!?\n]/.test(text[start - 1])) {
+    while (start > 0 && /\S/.test(text[start - 1]) && !/[,.!?\n]/.test(text[start - 1])) {
       start -= 1;
     }
-    while (end < text.length && /\S/.test(text[end]) && !/[.!?\n]/.test(text[end])) {
+    while (end < text.length && /\S/.test(text[end]) && !/[,.!?\n]/.test(text[end])) {
       end += 1;
     }
     const raw = text.slice(start, end);
@@ -211,10 +229,26 @@
     };
   }
 
-  function getSurroundingContext(text) {
-    const cursor = textarea.selectionStart ?? text.length;
-    const start = Math.max(0, cursor - 240);
-    const end = Math.min(text.length, cursor + 240);
+  function isReviewableChangedText(changedText, fullDraft, changedRangeInfo) {
+    const trimmed = String(changedText || "").trim();
+    if (trimmed.length < MIN_CHANGED_TEXT_LENGTH) return false;
+    if (endsInsideShortWord(fullDraft, changedRangeInfo)) return false;
+    return true;
+  }
+
+  function endsInsideShortWord(fullDraft, changedRangeInfo) {
+    const draftEnd = fullDraft.trimEnd().length;
+    if ((changedRangeInfo?.end ?? 0) !== draftEnd) return false;
+
+    const reviewedText = fullDraft.slice(changedRangeInfo.start, changedRangeInfo.end).trimEnd();
+    return /[A-Za-z]{1,2}$/.test(reviewedText);
+  }
+
+  function getSurroundingContext(text, changedRangeInfo) {
+    const anchorStart = changedRangeInfo?.start ?? textarea.selectionStart ?? text.length;
+    const anchorEnd = changedRangeInfo?.end ?? textarea.selectionStart ?? text.length;
+    const start = Math.max(0, anchorStart - 240);
+    const end = Math.min(text.length, anchorEnd + 240);
     return text.slice(start, end);
   }
 
@@ -234,49 +268,146 @@
     return { start, end: nextEnd };
   }
 
-  function renderSuggestions(suggestions, hash) {
+  function createReviewWindow(changed, hash) {
+    const reviewWindow = {
+      id: nextReviewId++,
+      start: changed.start,
+      end: changed.end,
+      text: changed.text,
+      textHash: hash,
+      status: "checking",
+      suggestions: [],
+    };
+    reviewWindows.push(reviewWindow);
+    return reviewWindow;
+  }
+
+  function buildPriorReviewContext() {
+    const visibleContext = reviewWindows
+      .filter((windowItem) => windowItem.status !== "checking")
+      .map((windowItem) => ({
+        id: windowItem.id,
+        text: windowItem.text,
+        text_hash: windowItem.textHash,
+        status: windowItem.status,
+        suggestions: windowItem.suggestions.map((suggestion) => ({
+          target_text: suggestion.target_text || "",
+          suggested_replacement: suggestion.suggested_replacement || "",
+          issue: suggestion.issue || "",
+          reason: suggestion.reason || "",
+        })),
+      }));
+    return [...priorReviewContext, ...visibleContext].slice(-5);
+  }
+
+  function rememberReviewContext(windowItem, statusOverride) {
+    if (!windowItem?.text) return;
+    priorReviewContext.push({
+      id: windowItem.id,
+      text: windowItem.text,
+      text_hash: windowItem.textHash,
+      status: statusOverride || windowItem.status,
+      suggestions: (windowItem.suggestions || []).map((suggestion) => ({
+        target_text: suggestion.target_text || "",
+        suggested_replacement: suggestion.suggested_replacement || "",
+        issue: suggestion.issue || "",
+        reason: suggestion.reason || "",
+      })),
+    });
+    priorReviewContext = priorReviewContext.slice(-8);
+  }
+
+  function findReviewWindow(reviewId) {
+    return reviewWindows.find((windowItem) => windowItem.id === reviewId);
+  }
+
+  function removeReviewWindow(reviewId) {
+    reviewWindows = reviewWindows.filter((windowItem) => windowItem.id !== reviewId);
+  }
+
+  function abortActiveRequests() {
+    activeRequests.forEach((controller) => controller.abort());
+    activeRequests.clear();
+  }
+
+  function renderSuggestions(suggestions, hash, reviewId) {
     listNode.innerHTML = "";
+    const reviewWindow = findReviewWindow(reviewId);
+    if (!reviewWindow) return;
+    const draft = textarea.value || "";
+    const anchoredWindow = reanchorReviewWindow(reviewWindow, draft);
+    if (!anchoredWindow) {
+      removeReviewWindow(reviewId);
+      renderDraftAnnotations();
+      setStatus("Reviewed text changed before suggestions returned. Waiting for next pause...");
+      return;
+    }
+
     if (!suggestions.length) {
-      if (lastChangedTextHash) reviewedTextHashes.add(lastChangedTextHash);
+      reviewWindow.suggestions = [];
+      rememberReviewContext(reviewWindow, "checked");
+      removeReviewWindow(reviewWindow.id);
+      if (hash || lastChangedTextHash) reviewedTextHashes.add(hash || lastChangedTextHash);
       renderDraftAnnotations();
       setStatus("No lightweight suggestions for this pause.");
       return;
     }
 
-    let nextIndex = nextSuggestionIndex();
     const nextSuggestions = suggestions
       .map((suggestion) => ({
         ...suggestion,
-        _index: nextIndex++,
-        _range: resolveSuggestionRange(suggestion),
+        _index: nextSuggestionId++,
+        _reviewId: reviewWindow.id,
+        _range: resolveSuggestionRange(suggestion, reviewWindow),
       }))
       .filter((suggestion) => suggestion._range && !settledSuggestionKeys.has(suggestionKey(suggestion)));
-    nextSuggestions.forEach((suggestion) => {
-      if (!hasMatchingSuggestion(suggestion)) {
-        anchoredSuggestions.push(suggestion);
-      }
-    });
-    sortAnchoredSuggestions();
+    const visibleSuggestions = dedupeSuggestions(nextSuggestions);
+    reviewWindow.status = visibleSuggestions.length ? "suggested" : "checked";
+    reviewWindow.suggestions = visibleSuggestions;
+    if (hash || lastChangedTextHash) reviewedTextHashes.add(hash || lastChangedTextHash);
+    if (!visibleSuggestions.length) {
+      rememberReviewContext(reviewWindow, "checked");
+      removeReviewWindow(reviewWindow.id);
+      renderDraftAnnotations();
+      setStatus("No lightweight suggestions for this pause.");
+      return;
+    }
+    sortReviewWindows();
     renderDraftAnnotations();
-    setStatus(`${suggestions.length} lightweight suggestion${suggestions.length === 1 ? "" : "s"} - ${hash}`);
+    setStatus(`${visibleSuggestions.length} lightweight suggestion${visibleSuggestions.length === 1 ? "" : "s"} - ${hash}`);
   }
 
-  function nextSuggestionIndex() {
-    const maxIndex = anchoredSuggestions.reduce((max, suggestion) => Math.max(max, suggestion._index || 0), -1);
-    return maxIndex + 1;
+  function dedupeSuggestions(suggestions) {
+    const seen = new Set();
+    return suggestions
+      .slice()
+      .filter((suggestion) => {
+        const key = [
+          suggestion._range?.start ?? "",
+          suggestion._range?.end ?? "",
+          suggestion.target_text || "",
+          suggestion.suggested_replacement || "",
+        ].join("\u0001");
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => a._range.start - b._range.start || suggestionPriority(a) - suggestionPriority(b) || rangeLength(a) - rangeLength(b) || a._index - b._index);
   }
 
-  function hasMatchingSuggestion(candidate) {
-    return anchoredSuggestions.some((suggestion) => {
-      const candidateRange = candidate._range || {};
-      const suggestionRange = suggestion._range || {};
-      return (
-        suggestion.target_text === candidate.target_text &&
-        suggestion.suggested_replacement === candidate.suggested_replacement &&
-        suggestionRange.start === candidateRange.start &&
-        suggestionRange.end === candidateRange.end
-      );
-    });
+  function suggestionPriority(suggestion) {
+    return isCorrectionLike(suggestion) ? 0 : 1;
+  }
+
+  function rangeLength(suggestion) {
+    return (suggestion._range?.end || 0) - (suggestion._range?.start || 0);
+  }
+
+  function isCorrectionLike(suggestion) {
+    const target = String(suggestion.target_text || "");
+    const replacement = String(suggestion.suggested_replacement || "");
+    if (target.trim().split(/\s+/).length > 2 || replacement.trim().split(/\s+/).length > 2) return false;
+    return Math.abs(target.length - replacement.length) <= 4;
   }
 
   function suggestionKey(suggestion) {
@@ -286,28 +417,37 @@
     ].join("\u0001");
   }
 
-  function sortAnchoredSuggestions() {
-    anchoredSuggestions.sort((a, b) => {
-      const aStart = a._range?.start ?? Number.MAX_SAFE_INTEGER;
-      const bStart = b._range?.start ?? Number.MAX_SAFE_INTEGER;
-      return aStart - bStart || a._index - b._index;
+  function sortReviewWindows() {
+    reviewWindows.sort((a, b) => a.start - b.start || a.id - b.id);
+    reviewWindows.forEach((windowItem) => {
+      windowItem.suggestions.sort((a, b) => {
+        const aStart = a._range?.start ?? Number.MAX_SAFE_INTEGER;
+        const bStart = b._range?.start ?? Number.MAX_SAFE_INTEGER;
+        return aStart - bStart || a._index - b._index;
+      });
     });
   }
 
   function dismissSuggestion(suggestionIndex) {
-    const dismissed = anchoredSuggestions.find((suggestion) => suggestion._index === suggestionIndex);
+    const dismissed = allSuggestions().find((suggestion) => suggestion._index === suggestionIndex);
     if (dismissed) {
       settledSuggestionKeys.add(suggestionKey(dismissed));
     }
-    anchoredSuggestions = anchoredSuggestions.filter((suggestion) => suggestion._index !== suggestionIndex);
+    reviewWindows.forEach((windowItem) => {
+      windowItem.suggestions = windowItem.suggestions.filter((suggestion) => suggestion._index !== suggestionIndex);
+      if (!windowItem.suggestions.length && windowItem.status === "suggested") {
+        rememberReviewContext(windowItem, "dismissed");
+        removeReviewWindow(windowItem.id);
+      }
+    });
     renderDraftAnnotations();
-    if (!anchoredSuggestions.length && lastChangedTextHash) {
+    if (!allSuggestions().length && lastChangedTextHash) {
       reviewedTextHashes.add(lastChangedTextHash);
       setStatus("Suggestions dismissed. This text will not be checked again unless it changes.");
     }
   }
 
-  function resolveSuggestionRange(suggestion) {
+  function resolveSuggestionRange(suggestion, reviewWindow) {
     const draft = textarea.value || "";
     const target = suggestion.target_text || "";
     if (!target) return null;
@@ -316,15 +456,16 @@
       return suggestion._range;
     }
 
-    if (checkedRange) {
-      const checkedText = draft.slice(checkedRange.start, checkedRange.end);
+    if (reviewWindow) {
+      const checkedText = draft.slice(reviewWindow.start, reviewWindow.end);
       const checkedOffset = checkedText.indexOf(target);
       if (checkedOffset >= 0) {
         return {
-          start: checkedRange.start + checkedOffset,
-          end: checkedRange.start + checkedOffset + target.length,
+          start: reviewWindow.start + checkedOffset,
+          end: reviewWindow.start + checkedOffset + target.length,
         };
       }
+      return null;
     }
 
     const fallback = draft.indexOf(target);
@@ -338,7 +479,8 @@
     if (!target || !replacement) return;
 
     const draft = textarea.value;
-    const range = suggestion._range || resolveSuggestionRange(suggestion);
+    const reviewWindow = findReviewWindow(suggestion._reviewId);
+    const range = suggestion._range || resolveSuggestionRange(suggestion, reviewWindow);
     const absolute = range ? range.start : -1;
 
     if (absolute < 0) {
@@ -348,36 +490,177 @@
 
     textarea.value = draft.slice(0, absolute) + replacement + draft.slice(range.end);
     settledSuggestionKeys.add(suggestionKey(suggestion));
-    shiftSuggestionRangesAfterEdit(range, replacement.length - (range.end - range.start), suggestion._index);
+    shiftReviewWindowsAfterEdit(range, replacement, replacement.length - (range.end - range.start), suggestion._index);
     lastPreviewDraft = textarea.value;
     applyScoreDeltas(suggestion.affected_scores || {});
-    checkedRange = null;
-    anchoredSuggestions = anchoredSuggestions.filter((item) => item._index !== suggestion._index);
+    reviewWindows.forEach((windowItem) => {
+      windowItem.suggestions = windowItem.suggestions.filter((item) => item._index !== suggestion._index);
+      if (!windowItem.suggestions.length && windowItem.status === "suggested") {
+        rememberReviewContext(windowItem, "accepted");
+        removeReviewWindow(windowItem.id);
+      }
+    });
     renderDraftAnnotations();
     textarea.focus();
     setStatus("Suggestion accepted into draft.");
   }
 
-  function shiftSuggestionRangesAfterEdit(editedRange, delta, acceptedIndex) {
-    anchoredSuggestions = anchoredSuggestions.map((suggestion) => {
-      if (suggestion._index === acceptedIndex || !suggestion._range) return suggestion;
+  function shiftReviewWindowsAfterEdit(editedRange, replacement, delta, acceptedIndex) {
+    const acceptedSuggestion = allSuggestions().find((item) => item._index === acceptedIndex);
+    const updatedDraft = textarea.value || "";
+    reviewWindows = reviewWindows.map((windowItem) => {
+      const updatedWindow = rebaseReviewWindowAfterEdit(windowItem, editedRange, replacement, delta, updatedDraft);
+      if (!updatedWindow) return null;
 
-      if (suggestion._range.start >= editedRange.end) {
-        return {
-          ...suggestion,
-          _range: {
-            start: suggestion._range.start + delta,
-            end: suggestion._range.end + delta,
-          },
-        };
-      }
+      const suggestions = windowItem.suggestions
+        .map((suggestion) => rebaseSuggestionAfterEdit(suggestion, editedRange, replacement, delta, acceptedIndex, acceptedSuggestion, updatedDraft))
+        .filter((suggestion) => suggestion);
 
-      if (suggestion._range.end <= editedRange.start) {
-        return suggestion;
-      }
+      return {
+        ...updatedWindow,
+        status: updatedWindow.status === "checking" || suggestions.length ? updatedWindow.status : "checked",
+        suggestions,
+      };
+    }).filter((windowItem) => windowItem);
+  }
 
-      return { ...suggestion, _range: null };
+  function rebaseReviewWindowAfterEdit(windowItem, editedRange, replacement, delta, updatedDraft) {
+    const mappedRange = mapRangeThroughEdit(windowItem, editedRange, replacement.length, true);
+    if (!mappedRange) return null;
+    const normalizedRange = normalizeRangeToText(updatedDraft, mappedRange);
+    if (!normalizedRange) return null;
+
+    return {
+      ...windowItem,
+      start: normalizedRange.start,
+      end: normalizedRange.end,
+      text: updatedDraft.slice(normalizedRange.start, normalizedRange.end).trim(),
+    };
+  }
+
+  function rebaseSuggestionAfterEdit(suggestion, editedRange, replacement, delta, acceptedIndex, acceptedSuggestion, updatedDraft) {
+    if (suggestion._index === acceptedIndex) return null;
+    if (!suggestion._range) return suggestion;
+    const mappedRange = mapRangeThroughEdit(suggestion._range, editedRange, replacement.length, false);
+    if (!mappedRange) return null;
+    const targetText = updatedDraft.slice(mappedRange.start, mappedRange.end);
+    if (!targetText.trim()) return null;
+
+    const acceptedTarget = String(acceptedSuggestion?.target_text || "");
+    const currentReplacement = String(suggestion.suggested_replacement || "");
+    return {
+      ...suggestion,
+      target_text: targetText,
+      suggested_replacement: acceptedTarget && currentReplacement.includes(acceptedTarget)
+        ? currentReplacement.replace(acceptedTarget, replacement)
+        : suggestion.suggested_replacement,
+      _range: mappedRange,
+    };
+  }
+
+  function mapRangeThroughEdit(range, editedRange, replacementLength, keepFullyCovered) {
+    const delta = replacementLength - (editedRange.end - editedRange.start);
+    if (range.end <= editedRange.start) {
+      return { start: range.start, end: range.end };
+    }
+    if (range.start >= editedRange.end) {
+      return {
+        start: range.start + delta,
+        end: range.end + delta,
+      };
+    }
+
+    const fullyCovered = range.start >= editedRange.start && range.end <= editedRange.end;
+    if (fullyCovered && !keepFullyCovered) return null;
+
+    const start = range.start < editedRange.start ? range.start : editedRange.start;
+    const end = range.end > editedRange.end
+      ? range.end + delta
+      : editedRange.start + replacementLength;
+    if (end <= start) return null;
+    return { start, end };
+  }
+
+  function normalizeRangeToText(text, range) {
+    let start = clampIndex(range.start, text.length);
+    let end = clampIndex(range.end, text.length);
+    while (start < end && /\s/.test(text[start])) {
+      start += 1;
+    }
+    while (end > start && /\s/.test(text[end - 1])) {
+      end -= 1;
+    }
+    if (end <= start) return null;
+    return { start, end };
+  }
+
+  function reanchorReviewWindow(windowItem, draft) {
+    const currentText = draft.slice(windowItem.start, windowItem.end).trim();
+    if (currentText === windowItem.text) return windowItem;
+
+    const anchorStart = findNearestTextAnchor(draft, windowItem.text, windowItem.start);
+    if (anchorStart < 0) return null;
+
+    windowItem.start = anchorStart;
+    windowItem.end = anchorStart + windowItem.text.length;
+    windowItem.suggestions.forEach((suggestion) => {
+      suggestion._range = resolveSuggestionRange(suggestion, windowItem);
     });
+    windowItem.suggestions = windowItem.suggestions.filter((suggestion) => suggestion._range);
+    return windowItem;
+  }
+
+  function findNearestTextAnchor(draft, text, preferredStart) {
+    if (!text) return -1;
+    let bestIndex = -1;
+    let bestDistance = Number.MAX_SAFE_INTEGER;
+    let cursor = draft.indexOf(text);
+    while (cursor >= 0) {
+      const distance = Math.abs(cursor - preferredStart);
+      if (distance < bestDistance) {
+        bestIndex = cursor;
+        bestDistance = distance;
+      }
+      cursor = draft.indexOf(text, cursor + 1);
+    }
+    return bestIndex;
+  }
+
+  function shiftSuggestionRange(suggestion, delta) {
+    if (!suggestion._range) return suggestion;
+    return {
+      ...suggestion,
+      _range: {
+        start: suggestion._range.start + delta,
+        end: suggestion._range.end + delta,
+      },
+    };
+  }
+
+  function reconcileReviewWindows() {
+    const draft = textarea.value || "";
+    reviewWindows = reviewWindows.filter((windowItem) => {
+      if (windowItem.status === "checking") {
+        reanchorReviewWindow(windowItem, draft);
+        return true;
+      }
+      return Boolean(reanchorReviewWindow(windowItem, draft));
+    });
+    reviewWindows.forEach((windowItem) => {
+      windowItem.suggestions.forEach((suggestion) => {
+        suggestion._range = resolveSuggestionRange(suggestion, windowItem);
+      });
+      windowItem.suggestions = windowItem.suggestions.filter((suggestion) => suggestion._range);
+      if (!windowItem.suggestions.length && windowItem.status === "suggested") {
+        rememberReviewContext(windowItem, "checked");
+        windowItem.status = "checked";
+      }
+    });
+    reviewWindows = reviewWindows.filter((windowItem) => windowItem.status !== "checked");
+  }
+
+  function allSuggestions() {
+    return reviewWindows.flatMap((windowItem) => windowItem.suggestions);
   }
 
   function applyScoreDeltas(deltas) {
@@ -394,15 +677,25 @@
       return;
     }
 
+    reconcileReviewWindows();
     const ranges = [];
-    if (checkedRange && checkedRange.end > checkedRange.start) {
-      ranges.push({ ...checkedRange, type: "checked" });
-    }
-    anchoredSuggestions.forEach((suggestion) => {
-      suggestion._range = resolveSuggestionRange(suggestion);
-      if (suggestion._range && suggestion._range.end > suggestion._range.start) {
-        ranges.push({ ...suggestion._range, type: "suggested", index: suggestion._index });
+    reviewWindows.forEach((windowItem) => {
+      if (windowItem.status === "checking" && windowItem.end > windowItem.start) {
+        ranges.push({ start: windowItem.start, end: windowItem.end, type: "checked", reviewId: windowItem.id });
       }
+      windowItem.suggestions.forEach((suggestion) => {
+        suggestion._range = resolveSuggestionRange(suggestion, windowItem);
+        if (suggestion._range && suggestion._range.end > suggestion._range.start) {
+          ranges.push({
+            ...suggestion._range,
+            type: "suggested",
+            index: suggestion._index,
+            reviewId: windowItem.id,
+            priority: suggestionPriority(suggestion),
+            length: rangeLength(suggestion),
+          });
+        }
+      });
     });
 
     renderHighlightLayer(draft, ranges);
@@ -426,7 +719,9 @@
         const active = ranges.filter((range) => start >= range.start && end <= range.end);
         const classes = ["draft-mark"];
         if (active.some((range) => range.type === "checked")) classes.push("checked");
-        const suggestion = active.find((range) => range.type === "suggested");
+        const suggestion = active
+          .filter((range) => range.type === "suggested")
+          .sort((a, b) => (a.priority || 0) - (b.priority || 0) || (a.length || 0) - (b.length || 0))[0];
         if (suggestion) classes.push("suggested");
         const data = suggestion ? ` data-suggestion-index="${suggestion.index}"` : "";
         return active.length
@@ -437,7 +732,8 @@
   }
 
   function renderSuggestionChips() {
-    draftSuggestionLayer.innerHTML = anchoredSuggestions
+    const suggestions = allSuggestions();
+    draftSuggestionLayer.innerHTML = suggestions
       .map((suggestion, orderIndex) => `
         <div class="draft-suggestion-chip" data-chip-index="${suggestion._index}">
           <strong>${orderIndex + 1}. ${escapeHtml(suggestion.issue || "Suggestion")}</strong>
@@ -454,7 +750,7 @@
     draftSuggestionLayer.querySelectorAll("[data-accept-inline]").forEach((button) => {
       button.addEventListener("click", () => {
         const index = Number(button.dataset.acceptInline);
-        const suggestion = anchoredSuggestions.find((item) => item._index === index);
+        const suggestion = allSuggestions().find((item) => item._index === index);
         if (suggestion) acceptSuggestion(suggestion);
       });
     });
@@ -470,8 +766,8 @@
     const shellRect = draftShell.getBoundingClientRect();
     const placedRects = [];
     const gap = 8;
-    sortAnchoredSuggestions();
-    anchoredSuggestions.forEach((suggestion) => {
+    sortReviewWindows();
+    allSuggestions().forEach((suggestion) => {
       const chip = draftSuggestionLayer.querySelector(`[data-chip-index="${suggestion._index}"]`);
       const marker = draftHighlightNode.querySelector(`[data-suggestion-index="${suggestion._index}"]`);
       if (!chip || !marker) return;
@@ -514,10 +810,12 @@
   }
 
   function clearDraftAnnotations() {
-    checkedRange = null;
-    anchoredSuggestions = [];
+    abortActiveRequests();
+    reviewWindows = [];
+    priorReviewContext = [];
     draftHighlightNode.innerHTML = "";
     draftSuggestionLayer.innerHTML = "";
+    listNode.innerHTML = "";
   }
 
   function renderScores() {
@@ -556,6 +854,63 @@
       .replace(/\b\w/g, (char) => char.toUpperCase());
   }
 
+  function installTestHooks() {
+    window.__livePreviewTestApi = {
+      setDraft(value) {
+        textarea.value = String(value || "");
+        lastPreviewDraft = textarea.value;
+      },
+      resetState() {
+        reviewWindows = [];
+        priorReviewContext = [];
+        reviewedTextHashes.clear();
+        settledSuggestionKeys.clear();
+        nextReviewId = 1;
+        nextSuggestionId = 1;
+      },
+      seedReviewWindow({ start, end, text, status = "suggested", suggestions = [] }) {
+        const reviewWindow = {
+          id: nextReviewId++,
+          start,
+          end,
+          text,
+          textHash: hashText(text),
+          status,
+          suggestions: [],
+        };
+        reviewWindow.suggestions = suggestions
+          .map((suggestion) => ({
+            ...suggestion,
+            _index: nextSuggestionId++,
+            _reviewId: reviewWindow.id,
+            _range: suggestion._range || resolveSuggestionRange(suggestion, reviewWindow),
+          }))
+          .filter((suggestion) => suggestion._range);
+        reviewWindows.push(reviewWindow);
+        sortReviewWindows();
+        return {
+          reviewId: reviewWindow.id,
+          suggestionIds: reviewWindow.suggestions.map((suggestion) => suggestion._index),
+        };
+      },
+      acceptSuggestion(index) {
+        const suggestion = allSuggestions().find((item) => item._index === index);
+        if (suggestion) acceptSuggestion(suggestion);
+      },
+      attachSuggestions(reviewId, suggestions, hash = "test-hash") {
+        renderSuggestions(suggestions, hash, reviewId);
+      },
+      state() {
+        return {
+          draft: textarea.value,
+          reviewWindows: JSON.parse(JSON.stringify(reviewWindows)),
+          suggestions: JSON.parse(JSON.stringify(allSuggestions())),
+          priorReviewContext: JSON.parse(JSON.stringify(priorReviewContext)),
+        };
+      },
+    };
+  }
+
   function escapeHtml(value) {
     return String(value)
       .replaceAll("&", "&amp;")
@@ -572,5 +927,9 @@
       hash = ((hash << 5) - hash + normalized.charCodeAt(index)) | 0;
     }
     return String(hash);
+  }
+
+  if (window.__LIVE_PREVIEW_TEST_HOOKS__) {
+    installTestHooks();
   }
 })();

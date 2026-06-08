@@ -31,6 +31,20 @@ class Team(models.Model):
     def __str__(self) -> str:
         return self.name
 
+
+class OrganizationContext(models.Model):
+    organization = models.OneToOneField(Organization, on_delete=models.CASCADE, related_name="context")
+    operating_context = models.JSONField(default=dict, blank=True)
+    current_priorities = models.JSONField(default=list, blank=True)
+    communication_patterns = models.JSONField(default=list, blank=True)
+    customer_segments = models.JSONField(default=list, blank=True)
+    known_constraints = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"{self.organization.name} context"
+
+
 class Employee(models.Model):
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="employees")
     team = models.ForeignKey(Team, on_delete=models.SET_NULL, null=True, blank=True, related_name="employees")
@@ -53,6 +67,66 @@ class Employee(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} — {self.role}"
+
+class ProjectContext(models.Model):
+    class Status(models.TextChoices):
+        PLANNED = "planned", "Planned"
+        ACTIVE = "active", "Active"
+        BLOCKED = "blocked", "Blocked"
+        PAUSED = "paused", "Paused"
+        DONE = "done", "Done"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="projects")
+    name = models.CharField(max_length=180)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.ACTIVE)
+    priority = models.CharField(max_length=40, blank=True)
+    quarter = models.CharField(max_length=40, blank=True)
+    team = models.ForeignKey(Team, on_delete=models.SET_NULL, null=True, blank=True, related_name="projects")
+    owner = models.ForeignKey(Employee, on_delete=models.SET_NULL, null=True, blank=True, related_name="owned_projects")
+    goals = models.JSONField(default=list, blank=True)
+    risks = models.JSONField(default=list, blank=True)
+    dependencies = models.JSONField(default=list, blank=True)
+    stakeholders = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("organization", "name")
+        ordering = ["organization__name", "status", "name"]
+
+    def __str__(self) -> str:
+        return f"{self.organization.name}: {self.name}"
+
+
+class MeetingContext(models.Model):
+    class Status(models.TextChoices):
+        UPCOMING = "upcoming", "Upcoming"
+        RECURRING = "recurring", "Recurring"
+        RECENT = "recent", "Recent"
+        PAUSED = "paused", "Paused"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="meeting_contexts")
+    title = models.CharField(max_length=180)
+    meeting_type = models.CharField(max_length=80, blank=True)
+    cadence = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.RECURRING)
+    team = models.ForeignKey(Team, on_delete=models.SET_NULL, null=True, blank=True, related_name="meeting_contexts")
+    owner = models.ForeignKey(Employee, on_delete=models.SET_NULL, null=True, blank=True, related_name="owned_meetings")
+    participants = models.JSONField(default=list, blank=True)
+    related_projects = models.JSONField(default=list, blank=True)
+    summary = models.TextField(blank=True)
+    decisions = models.JSONField(default=list, blank=True)
+    open_questions = models.JSONField(default=list, blank=True)
+    action_items = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("organization", "title")
+        ordering = ["organization__name", "title"]
+
+    def __str__(self) -> str:
+        return f"{self.organization.name}: {self.title}"
+
 
 class Message(models.Model):
     class Channel(models.TextChoices):

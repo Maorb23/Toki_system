@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Communication Persona Builder</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f6f7fb;
+      margin: 0;
+      padding: 40px;
+      color: #1f2937;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: auto;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 10px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #6b7280;
+      margin-bottom: 40px;
+    }
+
+    .persona-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
+    }
+
+    .persona-card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+      border-top: 6px solid #4f46e5;
+    }
+
+    .persona-card.worker {
+      border-top-color: #2563eb;
+    }
+
+    .persona-card.employer {
+      border-top-color: #16a34a;
+    }
+
+    .persona-type {
+      font-size: 14px;
+      font-weight: bold;
+      color: #6b7280;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    h2 {
+      margin-top: 0;
+      font-size: 22px;
+    }
+
+    label {
+      display: block;
+      font-weight: bold;
+      margin-top: 16px;
+      margin-bottom: 6px;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #d1d5db;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+
+    .section-title {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #e5e7eb;
+      font-size: 16px;
+      color: #111827;
+    }
+
+    button {
+      margin-top: 32px;
+      width: 100%;
+      padding: 14px;
+      background: #4f46e5;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #4338ca;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>Workplace Communication Persona Builder</h1>
+    <p class="subtitle">
+      Fill in realistic personas for a startup focused on improving communication in organizations,
+      especially for employees with different communication preferences or needs.
+    </p>
+
+    <form>
+      <div class="persona-grid">
+
+        <!-- Persona 1 -->
+        <div class="persona-card worker">
+          <div class="persona-type">Persona 1 — Employee</div>
+          <h2>Worker in a Large Organization</h2>
+
+          <label>Persona Name</label>
+          <input type="text" placeholder="Example: Daniel Cohen" />
+
+          <label>Role</label>
+          <input type="text" placeholder="Example: Operations Analyst" />
+
+          <label>Organization Type</label>
+          <input type="text" value="Large enterprise / global organization" />
+
+          <label>Work Environment</label>
+          <textarea placeholder="Example: Many departments, formal processes, frequent meetings, cross-functional communication."></textarea>
+
+          <div class="section-title">Communication Profile</div>
+
+          <label>Main Communication Challenge</label>
+          <textarea placeholder="Example: Struggles with unclear instructions, indirect feedback, long meetings, or sudden changes."></textarea>
+
+          <label>Possible Needs</label>
+          <textarea placeholder="Example: Clear written summaries, predictable structure, direct expectations, reduced ambiguity."></textarea>
+
+          <label>Preferred Communication Style</label>
+          <select>
+            <option>Clear and direct</option>
+            <option>Written and structured</option>
+            <option>Visual and example-based</option>
+            <option>Short and action-oriented</option>
+          </select>
+
+          <label>Preferred Channel</label>
+          <select>
+            <option>Email</option>
+            <option>Slack / Teams</option>
+            <option>One-on-one meeting</option>
+            <option>Project management tool</option>
+          </select>
+
+          <label>What Helps This Persona Succeed?</label>
+          <textarea placeholder="Example: Meeting agenda in advance, written follow-up, clear ownership, deadlines, and examples."></textarea>
+        </div>
+
+        <!-- Persona 2 -->
+        <div class="persona-card worker">
+          <div class="persona-type">Persona 2 — Employee</div>
+          <h2>Worker in a Medium Hi-Tech Company</h2>
+
+          <label>Persona Name</label>
+          <input type="text" placeholder="Example: Maya Levi" />
+
+          <label>Role</label>
+          <input type="text" placeholder="Example: Backend Developer" />
+
+          <label>Company Type</label>
+          <input type="text" value="Medium-sized hi-tech company" />
+
+          <label>Work Environment</label>
+          <textarea placeholder="Example: Fast-paced, agile teams, product changes often, informal communication."></textarea>
+
+          <div class="section-title">Communication Profile</div>
+
+          <label>Main Communication Challenge</label>
+          <textarea placeholder="Example: Difficulty understanding vague product requests, fast context switching, or unclear priorities."></textarea>
+
+          <label>Possible Needs</label>
+          <textarea placeholder="Example: Prioritized tasks, explicit acceptance criteria, written decisions, fewer last-minute changes."></textarea>
+
+          <label>Preferred Communication Style</label>
+          <select>
+            <option>Technical and precise</option>
+            <option>Written and structured</option>
+            <option>Short and practical</option>
+            <option>Example-based</option>
+          </select>
+
+          <label>Preferred Channel</label>
+          <select>
+            <option>Jira / Linear / Monday</option>
+            <option>Slack / Teams</option>
+            <option>Email</option>
+            <option>Short sync meeting</option>
+          </select>
+
+          <label>What Helps This Persona Succeed?</label>
+          <textarea placeholder="Example: Clear tickets, written product context, explicit deadlines, and reduced interruptions."></textarea>
+        </div>
+
+        <!-- Persona 3 -->
+        <div class="persona-card employer">
+          <div class="persona-type">Persona 3 — Employer / Manager</div>
+          <h2>Employer in a Large Organization</h2>
+
+          <label>Persona Name</label>
+          <input type="text" placeholder="Example: Ronit Adler" />
+
+          <label>Role</label>
+          <input type="text" placeholder="Example: Department Manager / HR Business Partner" />
+
+          <label>Organization Type</label>
+          <input type="text" value="Large enterprise / global organization" />
+
+          <label>Management Context</label>
+          <textarea placeholder="Example: Manages many employees, works with HR, compliance, leadership, and multiple departments."></textarea>
+
+          <div class="section-title">Employer Perspective</div>
+
+          <label>Main Communication Challenge</label>
+          <textarea placeholder="Example: Needs to communicate clearly across diverse teams while keeping messages consistent and inclusive."></textarea>
+
+          <label>What They Need From the Product</label>
+          <textarea placeholder="Example: Guidance on how to adapt messages to different employees without making assumptions or violating privacy."></textarea>
+
+          <label>Important Business Goal</label>
+          <select>
+            <option>Improve employee inclusion</option>
+            <option>Reduce misunderstandings</option>
+            <option>Improve productivity</option>
+            <option>Support managers with better communication</option>
+          </select>
+
+          <label>Concerns</label>
+          <textarea placeholder="Example: Privacy, legal sensitivity, employee trust, scalability, and integration with existing tools."></textarea>
+
+          <label>Success Metrics</label>
+          <textarea placeholder="Example: Fewer communication escalations, better employee satisfaction, improved task clarity, higher retention."></textarea>
+        </div>
+
+        <!-- Persona 4 -->
+        <div class="persona-card employer">
+          <div class="persona-type">Persona 4 — Employer / Manager</div>
+          <h2>Employer in a Medium Hi-Tech Company</h2>
+
+          <label>Persona Name</label>
+          <input type="text" placeholder="Example: Amir Ben-David" />
+
+          <label>Role</label>
+          <input type="text" placeholder="Example: VP R&D / Head of Product / Startup COO" />
+
+          <label>Company Type</label>
+          <input type="text" value="Medium-sized hi-tech company" />
+
+          <label>Management Context</label>
+          <textarea placeholder="Example: Fast-moving company, growing teams, informal culture, pressure to deliver quickly."></textarea>
+
+          <div class="section-title">Employer Perspective</div>
+
+          <label>Main Communication Challenge</label>
+          <textarea placeholder="Example: Needs fast, clear communication without slowing down product and engineering execution."></textarea>
+
+          <label>What They Need From the Product</label>
+          <textarea placeholder="Example: Real-time suggestions that improve clarity, tone, structure, and personalization before messages are sent."></textarea>
+
+          <label>Important Business Goal</label>
+          <select>
+            <option>Reduce friction between teams</option>
+            <option>Improve manager effectiveness</option>
+            <option>Support neurodiverse employees</option>
+            <option>Scale company culture</option>
+          </select>
+
+          <label>Concerns</label>
+          <textarea placeholder="Example: Tool adoption, speed, employee privacy, integration with Slack, Gmail, Teams, or Jira."></textarea>
+
+          <label>Success Metrics</label>
+          <textarea placeholder="Example: Faster alignment, fewer misunderstandings, better manager feedback, improved employee engagement."></textarea>
+        </div>
+
+      </div>
+
+      <button type="submit">Save Personas</button>
+    </form>
+  </div>
+</body>
+</html>

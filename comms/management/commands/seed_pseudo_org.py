@@ -1,5 +1,13 @@
 from django.core.management.base import BaseCommand
-from comms.models import Organization, OrgValue, Team, Employee
+from comms.models import (
+    Employee,
+    MeetingContext,
+    OrgValue,
+    Organization,
+    OrganizationContext,
+    ProjectContext,
+    Team,
+)
 
 
 NORTHSTAR_LABS = {
@@ -111,6 +119,106 @@ NORTHSTAR_LABS = {
             "prefs": {"style": "process-oriented", "detail": "medium-high", "structure": "issue, owner, timeline, dependency"},
             "pain": ["missing dependencies", "unclear owner"],
             "prompt": "Yael prefers structured messages that identify issue, owner, timeline, and dependencies.",
+        },
+    ],
+    "context": {
+        "operating_context": {
+            "market": "Mid-market B2B SaaS for customer operations teams.",
+            "stage": "Post-Series A growth with a Q3 enterprise-readiness push.",
+            "planning_horizon": "Current quarter plus next-quarter roadmap planning.",
+        },
+        "current_priorities": [
+            "Reduce enterprise onboarding friction before the Q3 roadmap review.",
+            "Improve reliability and incident communication for strategic accounts.",
+            "Clarify product tradeoffs between roadmap speed and customer-specific requests.",
+        ],
+        "communication_patterns": [
+            "Use customer impact before solution detail when speaking with Product or Sales.",
+            "Use exact owners and dates when asking Engineering or Operations for help.",
+            "Escalations should include blocker, impact, options, and recommended next step.",
+        ],
+        "customer_segments": ["Enterprise CS leaders", "Scale-up operations teams", "Strategic design partners"],
+        "known_constraints": [
+            "Engineering capacity is tight until the reliability workstream closes.",
+            "Sales needs clearer roadmap language for Q3 renewal conversations.",
+            "Customer Success is tracking two accounts with high onboarding risk.",
+        ],
+    },
+    "projects": [
+        {
+            "name": "Q3 Roadmap Alignment",
+            "description": "Finalize enterprise roadmap tradeoffs and prepare a clear narrative for Sales and Customer Success.",
+            "status": "active",
+            "priority": "high",
+            "quarter": "Q3",
+            "team": "Product",
+            "owner": "Maya Levi",
+            "goals": ["Lock top-three roadmap bets", "Document tradeoffs", "Prepare customer-facing talking points"],
+            "risks": ["Sales may overpromise roadmap timing", "Engineering estimates are still volatile"],
+            "dependencies": ["Reliability hardening capacity", "Customer Success escalation themes"],
+            "stakeholders": ["Ari Cohen", "Noam Bar", "Tamar Rosen", "Rina Tal"],
+        },
+        {
+            "name": "Enterprise Onboarding Reliability",
+            "description": "Stabilize onboarding workflows for strategic customers and reduce manual intervention.",
+            "status": "active",
+            "priority": "high",
+            "quarter": "Q3",
+            "team": "Engineering",
+            "owner": "Noam Bar",
+            "goals": ["Reduce failed onboarding jobs", "Clarify incident ownership", "Improve status visibility"],
+            "risks": ["Backend queue fixes may slip", "Customer-facing timelines need careful framing"],
+            "dependencies": ["Dana Weiss backend queue audit", "Rina Tal customer escalation notes"],
+            "stakeholders": ["Dana Weiss", "Rina Tal", "Yael Shalev"],
+        },
+        {
+            "name": "Strategic Account Escalation Playbook",
+            "description": "Create a shared escalation pattern for customer risks, ownership, and response timing.",
+            "status": "planned",
+            "priority": "medium",
+            "quarter": "Q3",
+            "team": "Customer Success",
+            "owner": "Rina Tal",
+            "goals": ["Standardize escalation messages", "Clarify handoffs", "Reduce repeated customer context gathering"],
+            "risks": ["Too much process could slow urgent replies"],
+            "dependencies": ["Operations owner map", "Product roadmap language"],
+            "stakeholders": ["Ari Cohen", "Maya Levi", "Yael Shalev"],
+        },
+    ],
+    "meetings": [
+        {
+            "title": "Q3 Roadmap Review",
+            "meeting_type": "roadmap",
+            "cadence": "Weekly on Tuesday",
+            "status": "recurring",
+            "team": "Product",
+            "owner": "Maya Levi",
+            "participants": ["Maya Levi", "Noam Bar", "Tamar Rosen", "Rina Tal", "Ari Cohen"],
+            "related_projects": ["Q3 Roadmap Alignment", "Enterprise Onboarding Reliability"],
+            "summary": "Align roadmap scope, customer commitments, and tradeoffs before executive review.",
+            "decisions": ["Separate committed Q3 items from exploratory discovery items."],
+            "open_questions": ["Which reliability fixes must ship before Sales can discuss enterprise rollout?"],
+            "action_items": [
+                {"owner": "Maya Levi", "task": "Draft roadmap narrative with customer impact.", "status": "open"},
+                {"owner": "Noam Bar", "task": "Confirm engineering confidence levels.", "status": "open"},
+            ],
+        },
+        {
+            "title": "Strategic Customer Risk Sync",
+            "meeting_type": "customer_escalation",
+            "cadence": "Twice weekly",
+            "status": "recurring",
+            "team": "Customer Success",
+            "owner": "Rina Tal",
+            "participants": ["Rina Tal", "Dana Weiss", "Yael Shalev", "Maya Levi"],
+            "related_projects": ["Enterprise Onboarding Reliability", "Strategic Account Escalation Playbook"],
+            "summary": "Review high-risk customer onboarding issues and agree on owners for next steps.",
+            "decisions": ["Use a single owner per escalation thread."],
+            "open_questions": ["Can Product provide clearer language for partial rollout delays?"],
+            "action_items": [
+                {"owner": "Dana Weiss", "task": "Summarize backend blockers in non-technical language.", "status": "open"},
+                {"owner": "Yael Shalev", "task": "Confirm operational handoff owner.", "status": "open"},
+            ],
         },
     ],
 }
@@ -267,6 +375,106 @@ THE_OFFICE = {
             "prompt": "Meredith prefers direct, low-friction messages. Name the system issue and the immediate next action.",
         },
     ],
+    "context": {
+        "operating_context": {
+            "market": "Regional paper sales branch with internal analytics and automation workstreams.",
+            "stage": "Branch modernization while protecting existing customer relationships.",
+            "planning_horizon": "Monthly branch targets plus current-quarter process improvements.",
+        },
+        "current_priorities": [
+            "Improve branch forecast accuracy without adding unnecessary meetings.",
+            "Stabilize supplier integration work for warehouse and sales handoffs.",
+            "Create cleaner customer-risk communication between Sales, Accounting, and Operations.",
+        ],
+        "communication_patterns": [
+            "Start with branch impact and the exact ask.",
+            "Use evidence and confidence levels for analytics topics.",
+            "Avoid vague urgency; name the customer, owner, and deadline.",
+        ],
+        "customer_segments": ["Regional paper buyers", "Renewal accounts", "Warehouse-dependent accounts"],
+        "known_constraints": [
+            "Sales has limited patience for long preambles.",
+            "Accounting requires exact numbers and documented exceptions.",
+            "Operations needs realistic timelines for supplier and warehouse changes.",
+        ],
+    },
+    "projects": [
+        {
+            "name": "Branch Forecast Refresh",
+            "description": "Update branch forecasting inputs and explain confidence levels for monthly planning.",
+            "status": "active",
+            "priority": "high",
+            "quarter": "Current quarter",
+            "team": "Data Science",
+            "owner": "Oscar Martinez",
+            "goals": ["Improve forecast accuracy", "Call out data limits", "Tie metrics to branch decisions"],
+            "risks": ["Stakeholders may overread low-confidence segments", "Sales input quality varies by account"],
+            "dependencies": ["Ryan Howard experiment readout", "Accounting exception data"],
+            "stakeholders": ["Michael Scott", "Jim Halpert", "Angela Martin", "Dwight Schrute"],
+        },
+        {
+            "name": "Supplier Portal Stabilization",
+            "description": "Fix recurring supplier integration issues affecting warehouse handoffs and order visibility.",
+            "status": "active",
+            "priority": "high",
+            "quarter": "Current quarter",
+            "team": "Product Engineering",
+            "owner": "Meredith Palmer",
+            "goals": ["Reduce failed supplier syncs", "Clarify system ownership", "Document acceptance criteria"],
+            "risks": ["Warehouse workarounds may mask integration failures", "Scope could expand without clear acceptance criteria"],
+            "dependencies": ["Darryl Philbin operations feedback", "Creed Bratton backend fix"],
+            "stakeholders": ["Darryl Philbin", "Andy Bernard", "Pam Beesly"],
+        },
+        {
+            "name": "Customer Renewal Risk Review",
+            "description": "Create a shared review path for renewal risks, customer concerns, and next actions.",
+            "status": "planned",
+            "priority": "medium",
+            "quarter": "Current quarter",
+            "team": "Sales",
+            "owner": "Jim Halpert",
+            "goals": ["Name renewal risks earlier", "Separate facts from assumptions", "Clarify who follows up"],
+            "risks": ["Too much meeting time may reduce sales focus"],
+            "dependencies": ["Branch Forecast Refresh", "Accounting exception summaries"],
+            "stakeholders": ["Dwight Schrute", "Phyllis Vance", "Stanley Hudson", "Angela Martin"],
+        },
+    ],
+    "meetings": [
+        {
+            "title": "Monday Branch Priorities",
+            "meeting_type": "leadership_sync",
+            "cadence": "Weekly on Monday",
+            "status": "recurring",
+            "team": "Regional Management",
+            "owner": "Michael Scott",
+            "participants": ["Michael Scott", "Dwight Schrute", "Jim Halpert", "Pam Beesly", "Darryl Philbin"],
+            "related_projects": ["Customer Renewal Risk Review", "Supplier Portal Stabilization"],
+            "summary": "Agree on branch priorities, customer risks, and owners for the week.",
+            "decisions": ["Use written context for status before the meeting."],
+            "open_questions": ["Which renewal accounts need manager involvement this week?"],
+            "action_items": [
+                {"owner": "Jim Halpert", "task": "Share top renewal risks in one page.", "status": "open"},
+                {"owner": "Darryl Philbin", "task": "Confirm warehouse blockers affecting customer delivery.", "status": "open"},
+            ],
+        },
+        {
+            "title": "Forecast and Exceptions Review",
+            "meeting_type": "analytics_review",
+            "cadence": "Biweekly",
+            "status": "recurring",
+            "team": "Data Science",
+            "owner": "Oscar Martinez",
+            "participants": ["Oscar Martinez", "Ryan Howard", "Angela Martin", "Michael Scott"],
+            "related_projects": ["Branch Forecast Refresh"],
+            "summary": "Review forecast changes, exception data, and confidence levels before branch planning.",
+            "decisions": ["Forecast summaries must include caveats and confidence levels."],
+            "open_questions": ["Which accounting exceptions should be excluded from forecast training data?"],
+            "action_items": [
+                {"owner": "Oscar Martinez", "task": "Label low-confidence segments.", "status": "open"},
+                {"owner": "Angela Martin", "task": "Provide documented billing exceptions.", "status": "open"},
+            ],
+        },
+    ],
 }
 
 
@@ -313,6 +521,45 @@ def seed_org(data: dict) -> Organization:
         manager_name = item["manager"]
         employee.manager = employees_by_name[manager_name] if manager_name else None
         employee.save(update_fields=["manager"])
+
+    context = data.get("context") or {}
+    if context:
+        org_context, _ = OrganizationContext.objects.get_or_create(organization=org)
+        org_context.operating_context = context.get("operating_context", {})
+        org_context.current_priorities = context.get("current_priorities", [])
+        org_context.communication_patterns = context.get("communication_patterns", [])
+        org_context.customer_segments = context.get("customer_segments", [])
+        org_context.known_constraints = context.get("known_constraints", [])
+        org_context.save()
+
+    for item in data.get("projects") or []:
+        project, _ = ProjectContext.objects.get_or_create(organization=org, name=item["name"])
+        project.description = item.get("description", "")
+        project.status = item.get("status", ProjectContext.Status.ACTIVE)
+        project.priority = item.get("priority", "")
+        project.quarter = item.get("quarter", "")
+        project.team = teams.get(item.get("team"))
+        project.owner = employees_by_name.get(item.get("owner"))
+        project.goals = item.get("goals", [])
+        project.risks = item.get("risks", [])
+        project.dependencies = item.get("dependencies", [])
+        project.stakeholders = item.get("stakeholders", [])
+        project.save()
+
+    for item in data.get("meetings") or []:
+        meeting, _ = MeetingContext.objects.get_or_create(organization=org, title=item["title"])
+        meeting.meeting_type = item.get("meeting_type", "")
+        meeting.cadence = item.get("cadence", "")
+        meeting.status = item.get("status", MeetingContext.Status.RECURRING)
+        meeting.team = teams.get(item.get("team"))
+        meeting.owner = employees_by_name.get(item.get("owner"))
+        meeting.participants = item.get("participants", [])
+        meeting.related_projects = item.get("related_projects", [])
+        meeting.summary = item.get("summary", "")
+        meeting.decisions = item.get("decisions", [])
+        meeting.open_questions = item.get("open_questions", [])
+        meeting.action_items = item.get("action_items", [])
+        meeting.save()
 
     return org
 

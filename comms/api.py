@@ -164,6 +164,7 @@ def api_inline_suggestions_preview(request: HttpRequest, org_id: int):
     full_draft = payload.get("full_draft") or ""
     changed_text = (payload.get("changed_text") or "").strip()
     surrounding_context = payload.get("surrounding_context") or ""
+    prior_review_context = payload.get("prior_review_context") or []
 
     if not all([sender_id, receiver_id, channel, intent, full_draft, changed_text]):
         return JsonResponse({
@@ -182,6 +183,7 @@ def api_inline_suggestions_preview(request: HttpRequest, org_id: int):
             full_draft=full_draft,
             changed_text=changed_text,
             surrounding_context=surrounding_context,
+            prior_review_context=prior_review_context,
         )
     except (NebiusConfigurationError, NebiusRuntimeError, LLMResponseValidationError, ValueError) as exc:
         return JsonResponse({"error": f"Inline preview failed: {exc}"}, status=400)
@@ -199,6 +201,7 @@ def api_gmail_inline_suggestions_preview(request: HttpRequest):
     full_draft = payload.get("full_draft") or ""
     changed_text = (payload.get("changed_text") or "").strip()
     surrounding_context = payload.get("surrounding_context") or ""
+    prior_review_context = payload.get("prior_review_context") or []
     intent = payload.get("intent")
 
     if not all([full_draft, changed_text, intent]):
@@ -214,6 +217,7 @@ def api_gmail_inline_suggestions_preview(request: HttpRequest):
             full_draft=full_draft,
             changed_text=changed_text,
             surrounding_context=surrounding_context,
+            prior_review_context=prior_review_context,
         )
     except Organization.DoesNotExist:
         return JsonResponse({"error": "Selected organization was not found."}, status=404)

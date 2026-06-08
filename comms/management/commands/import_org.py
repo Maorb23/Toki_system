@@ -2,7 +2,15 @@ import json
 from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
-from comms.models import Organization, OrgValue, Team, Employee
+from comms.models import (
+    Employee,
+    MeetingContext,
+    OrgValue,
+    Organization,
+    OrganizationContext,
+    ProjectContext,
+    Team,
+)
 
 class Command(BaseCommand):
     help = "Import an organization from a JSON config file."
@@ -91,5 +99,50 @@ class Command(BaseCommand):
             employee = employees_by_name[name]
             employee.manager = manager
             employee.save(update_fields=["manager"])
+
+        context = payload.get("context") or payload.get("organization_context") or {}
+        if context:
+            org_context, _ = OrganizationContext.objects.get_or_create(organization=org)
+            org_context.operating_context = context.get("operating_context", {})
+            org_context.current_priorities = context.get("current_priorities", [])
+            org_context.communication_patterns = context.get("communication_patterns", [])
+            org_context.customer_segments = context.get("customer_segments", [])
+            org_context.known_constraints = context.get("known_constraints", [])
+            org_context.save()
+
+        for item in payload.get("projects") or []:
+            name = item.get("name")
+            if not name:
+                continue
+            project, _ = ProjectContext.objects.get_or_create(organization=org, name=name)
+            project.description = item.get("description", "")
+            project.status = item.get("status", ProjectContext.Status.ACTIVE)
+            project.priority = item.get("priority", "")
+            project.quarter = item.get("quarter", "")
+            project.team = teams.get(item.get("team") or "")
+            project.owner = employees_by_name.get(item.get("owner") or item.get("owner_name") or "")
+            project.goals = item.get("goals", [])
+            project.risks = item.get("risks", [])
+            project.dependencies = item.get("dependencies", [])
+            project.stakeholders = item.get("stakeholders", [])
+            project.save()
+
+        for item in payload.get("meetings") or payload.get("meeting_contexts") or []:
+            title = item.get("title")
+            if not title:
+                continue
+            meeting, _ = MeetingContext.objects.get_or_create(organization=org, title=title)
+            meeting.meeting_type = item.get("meeting_type", "")
+            meeting.cadence = item.get("cadence", "")
+            meeting.status = item.get("status", MeetingContext.Status.RECURRING)
+            meeting.team = teams.get(item.get("team") or "")
+            meeting.owner = employees_by_name.get(item.get("owner") or item.get("owner_name") or "")
+            meeting.participants = item.get("participants", [])
+            meeting.related_projects = item.get("related_projects", [])
+            meeting.summary = item.get("summary", "")
+            meeting.decisions = item.get("decisions", [])
+            meeting.open_questions = item.get("open_questions", [])
+            meeting.action_items = item.get("action_items", [])
+            meeting.save()
 
         self.stdout.write(self.style.SUCCESS(f"Imported organization: {org.name}"))

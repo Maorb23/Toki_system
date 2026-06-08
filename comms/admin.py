@@ -3,10 +3,13 @@ from .models import (
     Employee,
     FeedbackReminder,
     InlineSuggestion,
+    MeetingContext,
     Message,
     OrgValue,
     OrgValuesDriftCheck,
+    OrganizationContext,
     Organization,
+    ProjectContext,
     ReceiverFeedback,
     ReceiverProfileRefreshProposal,
     SystemEvent,
@@ -29,10 +32,27 @@ class OrgValueAdmin(admin.ModelAdmin):
 class TeamAdmin(admin.ModelAdmin):
     list_display = ("name", "organization")
 
+@admin.register(OrganizationContext)
+class OrganizationContextAdmin(admin.ModelAdmin):
+    list_display = ("organization", "updated_at")
+    search_fields = ("organization__name",)
+
 @admin.register(Employee)
 class EmployeeAdmin(admin.ModelAdmin):
     list_display = ("name", "email", "role", "team", "manager")
     search_fields = ("name", "email", "role")
+
+@admin.register(ProjectContext)
+class ProjectContextAdmin(admin.ModelAdmin):
+    list_display = ("name", "organization", "status", "priority", "quarter", "team", "owner")
+    list_filter = ("organization", "status", "priority", "team")
+    search_fields = ("name", "description", "owner__name")
+
+@admin.register(MeetingContext)
+class MeetingContextAdmin(admin.ModelAdmin):
+    list_display = ("title", "organization", "meeting_type", "cadence", "status", "team", "owner")
+    list_filter = ("organization", "status", "meeting_type", "team")
+    search_fields = ("title", "summary", "owner__name")
 
 class InlineSuggestionInline(admin.TabularInline):
     model = InlineSuggestion

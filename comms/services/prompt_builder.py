@@ -35,6 +35,7 @@ def build_message_analysis_prompt(
     channel: str,
     intent: str,
     original_message: str,
+    tool_results: dict | None = None,
 ) -> str:
     org_values = [
         {"name": value.name, "description": value.description}
@@ -59,6 +60,8 @@ def build_message_analysis_prompt(
             "start_index and end_index must match target_text exactly.",
             "Prefer one complete sentence-level suggestion over a partial phrase suggestion when the change affects sentence meaning.",
             "Do not create overlapping suggestions; each suggestion must target a unique span.",
+            "Use retrieved context only when it is directly relevant to the sender's message.",
+            "Never add company facts, project facts, or receiver preferences that are not present in the draft or retrieved context.",
             "Return JSON only.",
         ],
         "organization": {
@@ -134,6 +137,9 @@ def build_message_analysis_prompt(
         },
     }
 
+    if tool_results:
+        payload["retrieved_context"] = tool_results
+
     return _safe_json(payload)
 
 def build_inline_preview_prompt(
@@ -146,6 +152,8 @@ def build_inline_preview_prompt(
     full_draft: str,
     changed_text: str,
     surrounding_context: str,
+    prior_review_context: list[dict] | None = None,
+    tool_results: dict | None = None,
 ) -> str:
     receiver_team = receiver.team
     org_values = [
@@ -157,13 +165,17 @@ def build_inline_preview_prompt(
         "task": "Provide lightweight receiver-aware inline suggestions for changed text only.",
         "hard_rules": [
             "Analyze only changed_text and surrounding_context.",
+            "Use prior_review_context as continuity context. Do not retarget prior reviewed text unless changed_text depends on it.",
             "Return suggestions only when there is a concrete improvement.",
             "Preserve the sender's intent.",
             "Avoid over-polishing. Keep the sender's voice natural.",
+            "A comma-ended changed_text can be treated as a complete phrase when the sender paused there.",
             "target_text must be an exact contiguous substring of changed_text.",
             "Use complete words or complete sentence spans. Never target part of a word.",
             "Do not create overlapping suggestions.",
             "Do not rewrite the full draft.",
+            "Use retrieved context only when it is directly relevant to changed_text and surrounding_context.",
+            "Never add company facts, project facts, or receiver preferences that are not present in the draft or retrieved context.",
             "Do not return subject_line, Slack version, Teams version, full risks, summary, explanation, scores_before, or estimated scores.",
             "Return JSON only.",
         ],
@@ -198,6 +210,7 @@ def build_inline_preview_prompt(
             "full_draft": full_draft,
             "changed_text": changed_text,
             "surrounding_context": surrounding_context,
+            "prior_review_context": prior_review_context or [],
         },
         "required_json_schema": {
             "inline_suggestions": [
@@ -216,5 +229,8 @@ def build_inline_preview_prompt(
             ]
         },
     }
+
+    if tool_results:
+        payload["retrieved_context"] = tool_results
 
     return _safe_json(payload)

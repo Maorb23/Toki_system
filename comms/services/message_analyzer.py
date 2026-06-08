@@ -1,10 +1,15 @@
+import hashlib
+import logging
 from typing import Any
 from django.db import transaction
 from comms.models import Employee, Message, InlineSuggestion, MessageRevision
+from comms.services.communication_graph import CommunicationGraphRunner
 from comms.services.llm_client import NebiusLLMClient
 from comms.services.prompt_builder import SYSTEM_PROMPT, build_message_analysis_prompt
 from comms.services.score_engine import normalize_scores
 from comms.services.event_log import log_event
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_text(value: Any) -> str:
@@ -41,6 +46,9 @@ def _require_int_range(value: Any, name: str, min_value: int, max_value: int) ->
         raise LLMResponseValidationError(f"{name} must be between {min_value} and {max_value}")
     return value
 
+def _short_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
 def _normalize_suggestion_span(original_message: str, item: dict) -> tuple[int | None, int | None, str | None]:
     target_text = item.get("target_text") or ""
     start_index = item.get("start_index")
@@ -48,10 +56,14 @@ def _normalize_suggestion_span(original_message: str, item: dict) -> tuple[int |
 
     if isinstance(start_index, int) and isinstance(end_index, int):
         if 0 <= start_index < end_index <= len(original_message):
-            normalized = original_message[start_index:end_index]
-            if normalized == target_text:
-                return start_index, end_index, normalized
-            return start_index, end_index, normalized
+            indexed_text = original_message[start_index:end_index]
+            if indexed_text == target_text:
+                return start_index, end_index, indexed_text
+            if target_text:
+                exact_start = original_message.find(target_text)
+                if exact_start != -1:
+                    return exact_start, exact_start + len(target_text), target_text
+            return start_index, end_index, indexed_text
 
     if target_text:
         start = original_message.find(target_text)
@@ -62,6 +74,7 @@ def _normalize_suggestion_span(original_message: str, item: dict) -> tuple[int |
 
 def validate_analysis_response(data: dict, original_message: str) -> dict:
     _require_dict(data, "root")
+    clean_data = dict(data)
     required = [
         "overall_suggested_message",
         "inline_suggestions",
@@ -76,17 +89,14 @@ def validate_analysis_response(data: dict, original_message: str) -> dict:
     _require_dict(data["scores_before"], "scores_before")
     _require_dict(data["estimated_scores_after_all_suggestions"], "estimated_scores_after_all_suggestions")
 
+    clean_suggestions = []
+    skipped_suggestions = []
+    normalized_suggestions = []
     for index, item in enumerate(data["inline_suggestions"]):
         _require_dict(item, f"inline_suggestions[{index}]")
         for field in ["target_text", "suggested_replacement"]:
             if not item.get(field):
                 raise LLMResponseValidationError(f"inline_suggestions[{index}].{field} is required")
-
-        target_text = item.get("target_text")
-        if target_text and target_text not in original_message:
-            raise LLMResponseValidationError(
-                f"inline_suggestions[{index}].target_text was not found in original_message"
-            )
 
         start_index = item.get("start_index")
         end_index = item.get("end_index")
@@ -104,6 +114,39 @@ def validate_analysis_response(data: dict, original_message: str) -> dict:
                     f"inline_suggestions[{index}].end_index is out of bounds"
                 )
 
+        start_index, end_index, normalized_text = _normalize_suggestion_span(original_message, item)
+        if normalized_text is None:
+            target_text = str(item.get("target_text") or "")
+            skipped_suggestions.append({
+                "index": index,
+                "reason": "target_text_not_found",
+                "target_text_length": len(target_text),
+                "target_text_hash": _short_hash(target_text),
+            })
+            logger.warning(
+                "Dropping unanchorable inline suggestion from LLM response: "
+                "index=%s target_text_hash=%s target_text_length=%s original_message_length=%s",
+                index,
+                _short_hash(target_text),
+                len(target_text),
+                len(original_message or ""),
+            )
+            continue
+
+        clean_item = dict(item)
+        if normalized_text != item.get("target_text") or start_index != item.get("start_index") or end_index != item.get("end_index"):
+            normalized_suggestions.append({
+                "index": index,
+                "target_text_hash": _short_hash(str(item.get("target_text") or "")),
+                "normalized_text_hash": _short_hash(normalized_text),
+                "start_index": start_index,
+                "end_index": end_index,
+            })
+        clean_item["target_text"] = normalized_text
+        clean_item["start_index"] = start_index
+        clean_item["end_index"] = end_index
+        clean_suggestions.append(clean_item)
+
     for key in ["clarity", "tone", "receiver_fit", "org_values_alignment"]:
         _require_int_range(data["scores_before"].get(key), f"scores_before.{key}", 0, 100)
         _require_int_range(
@@ -113,11 +156,18 @@ def validate_analysis_response(data: dict, original_message: str) -> dict:
             100,
         )
 
-    return data
+    clean_data["inline_suggestions"] = clean_suggestions
+    if skipped_suggestions or normalized_suggestions:
+        clean_data["_validation_metadata"] = {
+            "skipped_inline_suggestions": skipped_suggestions,
+            "normalized_inline_suggestions": normalized_suggestions,
+        }
+    return clean_data
 
 class MessageAnalyzer:
     def __init__(self, llm_client: NebiusLLMClient | None = None) -> None:
         self.llm_client = llm_client or NebiusLLMClient()
+        self.last_metadata: dict[str, Any] = {}
 
     @transaction.atomic
     def analyze(
@@ -132,6 +182,61 @@ class MessageAnalyzer:
         if sender.organization_id != receiver.organization_id:
             raise ValueError("Sender and receiver must belong to the same organization")
 
+        runner = CommunicationGraphRunner(
+            sender=sender,
+            receiver=receiver,
+            channel=channel,
+            intent=intent,
+            legacy_analyze=lambda message, tool_results=None: self._analyze_with_llm(
+                sender=sender,
+                receiver=receiver,
+                channel=channel,
+                intent=intent,
+                original_message=message,
+                tool_results=tool_results,
+            ),
+        )
+        state = runner.invoke(original_message)
+        self.last_metadata = state.get("metadata") or {}
+
+        message_id = state.get("message_id")
+        if not message_id:
+            raise ValueError("LangGraph analysis did not produce a message")
+
+        return Message.objects.get(pk=message_id)
+
+    def analyze_with_metadata(
+        self,
+        *,
+        sender: Employee,
+        receiver: Employee,
+        channel: str,
+        intent: str,
+        original_message: str,
+    ) -> tuple[Message, dict[str, Any]]:
+        message = self.analyze(
+            sender=sender,
+            receiver=receiver,
+            channel=channel,
+            intent=intent,
+            original_message=original_message,
+        )
+        return message, self.last_metadata
+
+    @transaction.atomic
+    def _analyze_with_llm(
+        self,
+        *,
+        sender: Employee,
+        receiver: Employee,
+        channel: str,
+        intent: str,
+        original_message: str,
+        tool_results: dict[str, Any] | None = None,
+    ) -> Message:
+        if sender.organization_id != receiver.organization_id:
+            raise ValueError("Sender and receiver must belong to the same organization")
+
         prompt = build_message_analysis_prompt(
             organization=sender.organization,
             sender=sender,
@@ -139,10 +244,15 @@ class MessageAnalyzer:
             channel=channel,
             intent=intent,
             original_message=original_message,
+            tool_results=tool_results,
         )
 
         raw = self.llm_client.chat_json(system_prompt=SYSTEM_PROMPT, user_prompt=prompt)
         data = validate_analysis_response(raw, original_message)
+        validation_metadata = data.pop("_validation_metadata", {})
+        raw_llm_response = dict(raw)
+        if validation_metadata:
+            raw_llm_response["validation_metadata"] = validation_metadata
 
         message = Message.objects.create(
             organization=sender.organization,
@@ -162,7 +272,7 @@ class MessageAnalyzer:
             risks=data.get("risks") or [],
             summary_of_changes=_safe_text(data.get("summary_of_changes", "")),
             explanation=_safe_text(data.get("explanation", "")),
-            raw_llm_response=raw,
+            raw_llm_response=raw_llm_response,
             status=Message.Status.ANALYZED,
         )
 

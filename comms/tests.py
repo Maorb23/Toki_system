@@ -366,6 +366,71 @@ class ValidationTests(TestCase):
         with self.assertRaises(LLMResponseValidationError):
             validate_analysis_response(data, "Hi there")
 
+    def test_analysis_validation_normalizes_mismatched_target_from_valid_indexes(self):
+        data = {
+            "overall_suggested_message": "Alpha improved Gamma",
+            "inline_suggestions": [
+                {
+                    "target_text": "Beta please",
+                    "suggested_replacement": "improved",
+                    "start_index": 6,
+                    "end_index": 10,
+                }
+            ],
+            "scores_before": {
+                "clarity": 50,
+                "tone": 50,
+                "receiver_fit": 50,
+                "org_values_alignment": 50,
+            },
+            "estimated_scores_after_all_suggestions": {
+                "clarity": 60,
+                "tone": 60,
+                "receiver_fit": 60,
+                "org_values_alignment": 60,
+            },
+        }
+
+        validated = validate_analysis_response(data, "Alpha Beta Gamma")
+
+        self.assertEqual(validated["inline_suggestions"][0]["target_text"], "Beta")
+        self.assertEqual(validated["inline_suggestions"][0]["start_index"], 6)
+        self.assertEqual(validated["inline_suggestions"][0]["end_index"], 10)
+        self.assertEqual(len(validated["_validation_metadata"]["normalized_inline_suggestions"]), 1)
+
+    def test_analysis_validation_skips_unanchorable_suggestion(self):
+        data = {
+            "overall_suggested_message": "Alpha improved Gamma",
+            "inline_suggestions": [
+                {
+                    "target_text": "outside text",
+                    "suggested_replacement": "replacement",
+                },
+                {
+                    "target_text": "Beta",
+                    "suggested_replacement": "improved",
+                },
+            ],
+            "scores_before": {
+                "clarity": 50,
+                "tone": 50,
+                "receiver_fit": 50,
+                "org_values_alignment": 50,
+            },
+            "estimated_scores_after_all_suggestions": {
+                "clarity": 60,
+                "tone": 60,
+                "receiver_fit": 60,
+                "org_values_alignment": 60,
+            },
+        }
+
+        validated = validate_analysis_response(data, "Alpha Beta Gamma")
+
+        self.assertEqual(len(validated["inline_suggestions"]), 1)
+        self.assertEqual(validated["inline_suggestions"][0]["target_text"], "Beta")
+        self.assertEqual(len(validated["_validation_metadata"]["skipped_inline_suggestions"]), 1)
+
     def test_inline_preview_skips_suggestion_target_outside_changed_text(self):
         data = {
             "inline_suggestions": [

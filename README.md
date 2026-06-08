@@ -112,6 +112,9 @@ NEBIUS_BASE_URL=https://api.studio.nebius.com/v1
 NEBIUS_MODEL=...
 COMMS_API_KEY=...
 COMMS_GMAIL_INTEGRATION_TOKEN=...
+WEAVE_TRACING=false
+WEAVE_PROJECT=your-team/communication-agent
+WANDB_API_KEY=...
 ```
 
 Railway will use the `Procfile`:
@@ -131,6 +134,42 @@ python manage.py seed_pseudo_org
 ### 1. Dashboard
 
 Shows org/team/employee/message activity.
+
+### LangGraph communication agent
+
+`MessageAnalyzer.analyze(...)` now runs through a LangGraph-based workflow while preserving the existing public API. The graph normalizes input, routes simple messages through deterministic fast paths, calls context tools only when needed, reuses the existing LLM analysis for rewrites, validates the final response, and stores runtime metadata on `Message.raw_llm_response["agent_metadata"]`.
+
+Graph docs and the Mermaid source live in:
+
+```text
+docs/communication_agent_graph.md
+docs/communication_agent_graph.mmd
+```
+
+Run the benchmark and aggregate metrics with:
+
+```bash
+python manage.py benchmark_communication_agent
+python manage.py communication_agent_metrics
+```
+
+Optional W&B Weave tracing:
+
+```bash
+export WEAVE_TRACING=true
+export WEAVE_PROJECT=your-team/communication-agent
+export WANDB_API_KEY=...
+python manage.py runserver
+```
+
+Check configuration and send a small test trace:
+
+```bash
+python manage.py weave_status
+python manage.py weave_status --send-test-trace
+```
+
+When enabled, the graph logs a trace for each agent run and nested traces for each graph node. Gmail/browser inline-preview calls are also traced as `communication_agent.inline_preview`, with nested preview-node traces and an execution summary for nodes, tools, steps, and latency. Trace inputs are sanitized to route, message length, receiver/company, selected tools, and runtime metadata rather than full prompt payloads.
 
 ### 2. Organization graph
 
@@ -170,6 +209,11 @@ python manage.py import_org path/to/org_config.json
 ```
 
 See the sample format in `org_config.sample.json`.
+
+The importer and pseudo-org seed data also support richer context:
+- `context` for operating context, priorities, customer segments, constraints, and communication patterns
+- `projects` for current or planned workstreams with owners, teams, risks, dependencies, and stakeholders
+- `meetings` for recurring or recent meeting context, decisions, open questions, and action items
 
 ## Scheduled Automations
 
