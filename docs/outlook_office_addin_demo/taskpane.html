@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Toki Outlook Demo</title>
+  <link rel="stylesheet" href="taskpane.css">
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Toki</p>
+        <h1>Receiver-aware draft review</h1>
+      </div>
+      <span class="badge">Outlook</span>
+    </header>
+
+    <section class="config-grid" aria-label="Configuration">
+      <label>
+        Backend URL
+        <input id="backendUrl" type="url" placeholder="https://your-backend.example.com" autocomplete="off">
+      </label>
+      <label>
+        Integration token
+        <input id="integrationToken" type="password" placeholder="COMMS_OUTLOOK_INTEGRATION_TOKEN" autocomplete="off">
+      </label>
+      <label>
+        Organization ID
+        <input id="organizationId" inputmode="numeric" placeholder="1">
+      </label>
+      <label>
+        Default sender email
+        <input id="senderEmail" type="email" placeholder="sender@company.test">
+      </label>
+      <label>
+        Receiver email
+        <input id="receiverEmail" type="email" placeholder="receiver@company.test">
+      </label>
+      <label>
+        Receiver name
+        <input id="receiverName" placeholder="Dana Receiver">
+      </label>
+      <label>
+        Intent
+        <select id="intent">
+          <option value="request">Request</option>
+          <option value="update">Update</option>
+          <option value="feedback">Feedback</option>
+          <option value="decision">Decision</option>
+          <option value="escalation">Escalation</option>
+          <option value="alignment">Alignment</option>
+          <option value="disagreement">Disagreement</option>
+          <option value="apology">Apology</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="draft-strip" aria-live="polite">
+      <div id="draftMeta">Draft details not loaded yet.</div>
+      <button id="refreshDraftButton" type="button" class="secondary">Refresh Draft</button>
+    </section>
+
+    <section class="actions" aria-label="Actions">
+      <button id="previewButton" type="button" class="secondary">Preview Inline Suggestions</button>
+      <button id="analyzeButton" type="button" class="primary">Analyze Draft</button>
+      <button id="applyButton" type="button" class="secondary" disabled>Apply Improved Version</button>
+    </section>
+
+    <div id="statusText" class="status" role="status">Open this task pane from an Outlook compose draft.</div>
+    <section id="resultRegion" class="results" aria-live="polite"></section>
+  </main>
+
+  <script src="taskpane.js"></script>
+</body>
+</html>

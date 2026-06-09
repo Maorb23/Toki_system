@@ -9,6 +9,11 @@ from django.utils import timezone
 from comms.models import Organization, Team, Employee, Message, InlineSuggestion, ReceiverFeedback
 from comms.services.event_log import log_event
 from comms.services.gmail_demo import analyze_gmail_draft, get_gmail_demo_participants
+from comms.services.outlook_demo import (
+    OutlookOrganizationNotFound,
+    analyze_outlook_draft,
+    get_outlook_demo_participants,
+)
 from comms.services.inline_preview import InlineSuggestionPreviewer
 from comms.services.message_analyzer import MessageAnalyzer, LLMResponseValidationError
 from comms.services.llm_client import NebiusConfigurationError, NebiusRuntimeError
@@ -44,6 +49,51 @@ def require_gmail_integration_token(view_func):
             return JsonResponse({"error": "Invalid Gmail integration token"}, status=401)
 
         return view_func(request, *args, **kwargs)
+
+    return wrapper
+
+
+def require_outlook_integration_token(view_func):
+    @wraps(view_func)
+    def wrapper(request: HttpRequest, *args, **kwargs):
+        token = settings.COMMS_OUTLOOK_INTEGRATION_TOKEN
+        if not token:
+            return JsonResponse({"error": "COMMS_OUTLOOK_INTEGRATION_TOKEN is not configured"}, status=500)
+
+        provided = request.headers.get("X-Outlook-Integration-Token", "")
+        if provided != token:
+            return JsonResponse({"error": "Invalid Outlook integration token"}, status=401)
+
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
+
+
+def allow_outlook_demo_cors(view_func):
+    @wraps(view_func)
+    def wrapper(request: HttpRequest, *args, **kwargs):
+        if request.method == "OPTIONS":
+            response = JsonResponse({}, status=204)
+        else:
+            response = view_func(request, *args, **kwargs)
+
+        allowed_origins = [
+            origin.strip()
+            for origin in settings.COMMS_OUTLOOK_ALLOWED_ORIGINS.split(",")
+            if origin.strip()
+        ]
+        request_origin = request.headers.get("Origin", "")
+        if "*" in allowed_origins:
+            response["Access-Control-Allow-Origin"] = "*"
+        elif request_origin in allowed_origins:
+            response["Access-Control-Allow-Origin"] = request_origin
+            response["Vary"] = "Origin"
+
+        response["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response["Access-Control-Allow-Headers"] = (
+            "Content-Type, X-Outlook-Integration-Token, ngrok-skip-browser-warning"
+        )
+        return response
 
     return wrapper
 
@@ -236,6 +286,50 @@ def api_gmail_inline_suggestions_preview(request: HttpRequest):
 @require_gmail_integration_token
 def api_gmail_inline_suggestions_preview_v1(request: HttpRequest):
     return api_gmail_inline_suggestions_preview(request)
+
+
+@csrf_exempt
+@allow_outlook_demo_cors
+@require_POST
+@require_outlook_integration_token
+def api_outlook_inline_suggestions_preview(request: HttpRequest):
+    try:
+        payload = parse_json(request)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    full_draft = payload.get("full_draft") or ""
+    changed_text = (payload.get("changed_text") or "").strip()
+    surrounding_context = payload.get("surrounding_context") or ""
+    prior_review_context = payload.get("prior_review_context") or []
+    intent = payload.get("intent")
+
+    if not all([full_draft, changed_text, intent]):
+        return JsonResponse({"error": "full_draft, changed_text, and intent are required"}, status=400)
+
+    try:
+        org, sender, receiver, receiver_created = get_outlook_demo_participants(payload)
+        preview = InlineSuggestionPreviewer().preview(
+            sender=sender,
+            receiver=receiver,
+            channel=Message.Channel.OUTLOOK,
+            intent=intent,
+            full_draft=full_draft,
+            changed_text=changed_text,
+            surrounding_context=surrounding_context,
+            prior_review_context=prior_review_context,
+        )
+    except OutlookOrganizationNotFound:
+        return JsonResponse({"error": "organization_id was not found"}, status=404)
+    except (NebiusConfigurationError, NebiusRuntimeError, LLMResponseValidationError, ValueError) as exc:
+        return JsonResponse({"error": f"Outlook inline preview failed: {exc}"}, status=400)
+
+    preview["receiver_created"] = receiver_created
+    preview["receiver_id"] = receiver.id
+    preview["sender_id"] = sender.id
+    preview["organization_id"] = org.id
+    preview["metadata"] = {"channel": "outlook"}
+    return JsonResponse(preview)
 
 
 @require_GET
@@ -482,6 +576,14 @@ def api_gmail_health(request: HttpRequest):
 
 
 @csrf_exempt
+@allow_outlook_demo_cors
+@require_GET
+@require_outlook_integration_token
+def api_outlook_health(request: HttpRequest):
+    return JsonResponse({"ok": True, "integration": "outlook", "status": "ready"})
+
+
+@csrf_exempt
 @require_POST
 @require_gmail_integration_token
 def api_gmail_analyze_draft(request: HttpRequest):
@@ -508,3 +610,81 @@ def api_gmail_analyze_draft(request: HttpRequest):
         },
     )
     return JsonResponse(response)
+
+
+@csrf_exempt
+@allow_outlook_demo_cors
+@require_POST
+@require_outlook_integration_token
+def api_outlook_analyze_draft(request: HttpRequest):
+    try:
+        payload = parse_json(request)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    try:
+        message, response = analyze_outlook_draft(payload, request=request)
+    except OutlookOrganizationNotFound:
+        return JsonResponse({"error": "organization_id was not found"}, status=404)
+    except (NebiusConfigurationError, NebiusRuntimeError, LLMResponseValidationError, ValueError) as exc:
+        return JsonResponse({"error": f"Outlook draft analysis failed: {exc}"}, status=400)
+
+    log_event(
+        "outlook_draft_analyzed",
+        message=message,
+        source="outlook",
+        payload={
+            "subject": payload.get("subject", ""),
+            "sender_email": payload.get("sender_email", ""),
+            "receiver_email": payload.get("receiver_email", ""),
+        },
+    )
+    return JsonResponse(response)
+
+
+@csrf_exempt
+@allow_outlook_demo_cors
+@require_POST
+@require_outlook_integration_token
+def api_outlook_event(request: HttpRequest):
+    try:
+        payload = parse_json(request)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    event_type = payload.get("event_type")
+    allowed_events = {
+        "outlook_suggestion_applied",
+        "outlook_suggestion_rejected",
+        "outlook_improved_version_applied",
+    }
+    if event_type not in allowed_events:
+        return JsonResponse({"error": "Unsupported Outlook event type"}, status=400)
+
+    message = None
+    organization = None
+    message_id = payload.get("message_id")
+    if message_id:
+        message = get_object_or_404(
+            Message.objects.select_related("organization", "sender", "receiver"),
+            pk=message_id,
+        )
+        organization = message.organization
+    elif payload.get("organization_id"):
+        organization = get_object_or_404(Organization, pk=payload.get("organization_id"))
+
+    log_event(
+        event_type,
+        organization=organization,
+        message=message,
+        source="outlook",
+        payload={
+            "message_id": message_id,
+            "organization_id": payload.get("organization_id"),
+            "sender_email": payload.get("sender_email", ""),
+            "receiver_email": payload.get("receiver_email", ""),
+            "suggestion_id": payload.get("suggestion_id", ""),
+            "target_text": payload.get("target_text", ""),
+        },
+    )
+    return JsonResponse({"ok": True, "event_type": event_type})

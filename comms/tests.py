@@ -1139,6 +1139,9 @@ class ApiTests(TestCase):
     def _gmail_headers(self, token="gmail-token"):
         return {"HTTP_X_GMAIL_INTEGRATION_TOKEN": token}
 
+    def _outlook_headers(self, token="outlook-token"):
+        return {"HTTP_X_OUTLOOK_INTEGRATION_TOKEN": token}
+
     @override_settings(COMMS_GMAIL_INTEGRATION_TOKEN="gmail-token")
     def test_gmail_health_endpoint(self):
         response = self.client.get("/api/v1/integrations/gmail/health/", **self._gmail_headers())
@@ -1252,3 +1255,221 @@ class ApiTests(TestCase):
 
         self.assertNotEqual(response.status_code, 403)
         self.assertEqual(response.status_code, 200)
+
+    @override_settings(COMMS_OUTLOOK_INTEGRATION_TOKEN="outlook-token")
+    def test_outlook_health_endpoint(self):
+        response = self.client.get("/api/v1/integrations/outlook/health/", **self._outlook_headers())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["integration"], "outlook")
+
+    @override_settings(COMMS_OUTLOOK_INTEGRATION_TOKEN="outlook-token")
+    def test_outlook_analyze_rejects_invalid_token(self):
+        response = self.client.post(
+            "/api/v1/integrations/outlook/analyze-draft/",
+            data=json.dumps({}),
+            content_type="application/json",
+            **self._outlook_headers("wrong-token"),
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    @override_settings(COMMS_OUTLOOK_INTEGRATION_TOKEN="outlook-token")
+    def test_outlook_analyze_preflight_allows_taskpane_fetch(self):
+        response = self.client.options(
+            "/api/v1/integrations/outlook/analyze-draft/",
+            HTTP_ORIGIN="https://localhost:3000",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response["Access-Control-Allow-Origin"], "*")
+        self.assertIn("X-Outlook-Integration-Token", response["Access-Control-Allow-Headers"])
+
+    @override_settings(COMMS_OUTLOOK_INTEGRATION_TOKEN="outlook-token")
+    def test_outlook_inline_preview_rejects_invalid_token(self):
+        response = self.client.post(
+            "/api/v1/integrations/outlook/inline-suggestions/preview/",
+            data=json.dumps({}),
+            content_type="application/json",
+            **self._outlook_headers("wrong-token"),
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    @override_settings(COMMS_OUTLOOK_INTEGRATION_TOKEN="outlook-token")
+    @patch("comms.api.InlineSuggestionPreviewer.preview")
+    def test_outlook_inline_preview_maps_emails_and_uses_outlook_channel(self, preview):
+        preview.return_value = {
+            "text_hash": "abc123",
+            "suggestions": [
+                {
+                    "target_text": "Fix this.",
+                    "suggested_replacement": "Could you fix this?",
+                    "issue": "Too blunt",
+                    "reason": "Softer",
+                    "affected_scores": {"tone": 8},
+                }
+            ],
+        }
+        payload = {
+            "organization_id": self.org.id,
+            "sender_email": "sender@example.com",
+            "receiver_email": "receiver@example.com",
+            "receiver_name": "Receiver",
+            "intent": Message.Intent.REQUEST,
+            "full_draft": "Fix this.",
+            "changed_text": "Fix this.",
+            "surrounding_context": "Fix this.",
+        }
+
+        response = self.client.post(
+            "/api/v1/integrations/outlook/inline-suggestions/preview/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            **self._outlook_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["sender_id"], self.sender.id)
+        self.assertEqual(body["receiver_id"], self.receiver.id)
+        self.assertEqual(body["metadata"]["channel"], "outlook")
+        preview.assert_called_once()
+        self.assertEqual(preview.call_args.kwargs["channel"], Message.Channel.OUTLOOK)
+
+    @override_settings(COMMS_OUTLOOK_INTEGRATION_TOKEN="outlook-token")
+    @patch("comms.services.outlook_demo.MessageAnalyzer.analyze")
+    def test_outlook_analyze_maps_payload_uses_outlook_channel_and_returns_demo_schema(self, analyze):
+        def create_message(*, sender, receiver, channel, intent, original_message):
+            message = Message.objects.create(
+                organization=self.org,
+                sender=sender,
+                receiver=receiver,
+                channel=channel,
+                intent=intent,
+                original_text=original_message,
+                final_text=original_message,
+                overall_suggested_message="Improved Outlook draft",
+                slack_short_version="Short draft",
+                scores_before={"clarity": 70, "tone": 70, "receiver_fit": 70, "org_values_alignment": 70},
+                estimated_scores_after_all={"clarity": 80, "tone": 80, "receiver_fit": 80, "org_values_alignment": 80},
+                current_scores={"clarity": 70, "tone": 70, "receiver_fit": 70, "org_values_alignment": 70},
+                explanation="Explanation",
+                status=Message.Status.ANALYZED,
+            )
+            InlineSuggestion.objects.create(
+                message=message,
+                target_text="Fix this.",
+                suggested_replacement="Could you fix this?",
+            )
+            return message
+
+        analyze.side_effect = create_message
+        payload = {
+            "organization_id": self.org.id,
+            "sender_email": "sender@example.com",
+            "receiver_email": "receiver@example.com",
+            "receiver_name": "Receiver",
+            "subject": "Status",
+            "body": "Fix this.",
+            "intent": Message.Intent.REQUEST,
+            "channel": "outlook",
+        }
+
+        response = self.client.post(
+            "/api/v1/integrations/outlook/analyze-draft/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            **self._outlook_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        message = Message.objects.get(channel=Message.Channel.OUTLOOK)
+        body = response.json()
+        self.assertEqual(message.receiver, self.receiver)
+        self.assertEqual(message.status, Message.Status.ANALYZED)
+        self.assertEqual(body["channel"], Message.Channel.OUTLOOK)
+        self.assertEqual(body["metadata"]["channel"], "outlook")
+        self.assertEqual(body["improved_version"], "Improved Outlook draft")
+        self.assertIn("dashboard_absolute_url", body)
+        analyze.assert_called_once()
+        self.assertEqual(analyze.call_args.kwargs["channel"], Message.Channel.OUTLOOK)
+        self.assertIn("Subject: Status", analyze.call_args.kwargs["original_message"])
+        self.assertFalse(message.sent_at)
+
+    @override_settings(COMMS_OUTLOOK_INTEGRATION_TOKEN="outlook-token")
+    @patch("comms.services.outlook_demo.MessageAnalyzer.analyze")
+    def test_outlook_analyze_creates_unknown_receiver_like_demo_integrations(self, analyze):
+        def create_message(*, sender, receiver, channel, intent, original_message):
+            return Message.objects.create(
+                organization=self.org,
+                sender=sender,
+                receiver=receiver,
+                channel=channel,
+                intent=intent,
+                original_text=original_message,
+                final_text=original_message,
+                scores_before={"clarity": 70, "tone": 70, "receiver_fit": 70, "org_values_alignment": 70},
+                estimated_scores_after_all={"clarity": 80, "tone": 80, "receiver_fit": 80, "org_values_alignment": 80},
+                current_scores={"clarity": 70, "tone": 70, "receiver_fit": 70, "org_values_alignment": 70},
+                status=Message.Status.ANALYZED,
+            )
+
+        analyze.side_effect = create_message
+        payload = {
+            "organization_id": self.org.id,
+            "sender_email": "sender@example.com",
+            "receiver_email": "new.receiver@example.com",
+            "receiver_name": "New Receiver",
+            "subject": "Status",
+            "body": "Could you review this?",
+            "intent": Message.Intent.REQUEST,
+        }
+
+        response = self.client.post(
+            "/api/v1/integrations/outlook/analyze-draft/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            **self._outlook_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        receiver = Employee.objects.get(email="new.receiver@example.com")
+        self.assertTrue(body["receiver_created"])
+        self.assertEqual(receiver.name, "New Receiver")
+        self.assertEqual(receiver.role, "Outlook demo receiver")
+        self.assertEqual(body["receiver_id"], receiver.id)
+
+    @override_settings(COMMS_OUTLOOK_INTEGRATION_TOKEN="outlook-token")
+    @patch("comms.api.log_event")
+    def test_outlook_event_endpoint_logs_apply_event(self, log):
+        message = Message.objects.create(
+            organization=self.org,
+            sender=self.sender,
+            receiver=self.receiver,
+            channel=Message.Channel.OUTLOOK,
+            intent=Message.Intent.REQUEST,
+            original_text="Message",
+            status=Message.Status.ANALYZED,
+        )
+
+        response = self.client.post(
+            "/api/v1/integrations/outlook/events/",
+            data=json.dumps({
+                "event_type": "outlook_suggestion_applied",
+                "message_id": message.id,
+                "organization_id": self.org.id,
+                "sender_email": self.sender.email,
+                "receiver_email": self.receiver.email,
+            }),
+            content_type="application/json",
+            **self._outlook_headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        log.assert_called_once()
+        self.assertEqual(log.call_args.args[0], "outlook_suggestion_applied")
+        self.assertEqual(log.call_args.kwargs["message"], message)
+        self.assertEqual(log.call_args.kwargs["source"], "outlook")

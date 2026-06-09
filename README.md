@@ -41,6 +41,7 @@ NEBIUS_BASE_URL=https://api.studio.nebius.com/v1
 NEBIUS_MODEL=...
 COMMS_API_KEY=change-me
 COMMS_GMAIL_INTEGRATION_TOKEN=change-me-gmail-demo-token
+COMMS_OUTLOOK_INTEGRATION_TOKEN=change-me-outlook-demo-token
 ```
 
 Run:
@@ -74,6 +75,12 @@ Gmail Chrome extension demo files:
 
 ```text
 docs/gmail_chrome_extension_demo/
+```
+
+Outlook Office Add-in demo files:
+
+```text
+docs/outlook_office_addin_demo/
 ```
 
 For a Gmail-side demo, seed the Acme demo organization and users:
@@ -112,6 +119,8 @@ NEBIUS_BASE_URL=https://api.studio.nebius.com/v1
 NEBIUS_MODEL=...
 COMMS_API_KEY=...
 COMMS_GMAIL_INTEGRATION_TOKEN=...
+COMMS_OUTLOOK_INTEGRATION_TOKEN=...
+COMMS_OUTLOOK_ALLOWED_ORIGINS=*
 WEAVE_TRACING=false
 WEAVE_PROJECT=your-team/communication-agent
 WANDB_API_KEY=...
@@ -387,6 +396,27 @@ curl -H "X-Gmail-Integration-Token: $COMMS_GMAIL_INTEGRATION_TOKEN" \
 	http://127.0.0.1:8000/api/v1/integrations/gmail/analyze-draft/
 ```
 
+Outlook Office Add-in demo endpoints use `X-Outlook-Integration-Token`:
+
+```bash
+curl -H "X-Outlook-Integration-Token: $COMMS_OUTLOOK_INTEGRATION_TOKEN" \
+	http://127.0.0.1:8000/api/v1/integrations/outlook/health/
+```
+
+```bash
+curl -H "X-Outlook-Integration-Token: $COMMS_OUTLOOK_INTEGRATION_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"organization_id":1,"sender_email":"rina@example.com","receiver_email":"dana@example.com","receiver_name":"Dana Weiss","subject":"Status","body":"Fix this today.","intent":"request","channel":"outlook"}' \
+	http://127.0.0.1:8000/api/v1/integrations/outlook/analyze-draft/
+```
+
+```bash
+curl -H "X-Outlook-Integration-Token: $COMMS_OUTLOOK_INTEGRATION_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{"organization_id":1,"sender_email":"rina@example.com","receiver_email":"dana@example.com","receiver_name":"Dana Weiss","intent":"request","full_draft":"Fix this today.","changed_text":"Fix this today.","surrounding_context":"Subject: Status"}' \
+	http://127.0.0.1:8000/api/v1/integrations/outlook/inline-suggestions/preview/
+```
+
 ## Integration stubs
 
 The following are intentionally light adapter stubs:
@@ -396,6 +426,7 @@ comms/integrations/base.py
 comms/integrations/slack_adapter.py
 comms/integrations/teams_adapter.py
 comms/integrations/gmail_adapter.py
+comms/integrations/outlook_adapter.py
 ```
 
 They define the future boundary:

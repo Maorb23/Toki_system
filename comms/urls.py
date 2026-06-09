@@ -36,4 +36,8 @@ urlpatterns = [
     path("api/v1/integrations/gmail/health/", api.api_gmail_health, name="api_gmail_health"),
     path("api/v1/integrations/gmail/analyze-draft/", api.api_gmail_analyze_draft, name="api_gmail_analyze_draft"),
     path("api/v1/integrations/gmail/inline-suggestions/preview/", api.api_gmail_inline_suggestions_preview_v1, name="api_gmail_inline_suggestions_preview_v1"),
+    path("api/v1/integrations/outlook/health/", api.api_outlook_health, name="api_outlook_health"),
+    path("api/v1/integrations/outlook/analyze-draft/", api.api_outlook_analyze_draft, name="api_outlook_analyze_draft"),
+    path("api/v1/integrations/outlook/inline-suggestions/preview/", api.api_outlook_inline_suggestions_preview, name="api_outlook_inline_suggestions_preview"),
+    path("api/v1/integrations/outlook/events/", api.api_outlook_event, name="api_outlook_event"),
 ]

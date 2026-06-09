@@ -133,6 +133,7 @@ class Message(models.Model):
         SLACK = "slack", "Slack"
         TEAMS = "teams", "Teams"
         GMAIL = "gmail", "Gmail"
+        OUTLOOK = "outlook", "Outlook"
         EMAIL = "email", "Email"
 
     class Intent(models.TextChoices):
