@@ -1,5 +1,8 @@
 (function () {
   const STORAGE_KEY = "tokiOutlookDemoSettings";
+  const LIVE_PREVIEW_POLL_MS = 750;
+  const LIVE_PREVIEW_DEBOUNCE_MS = 1200;
+  const MIN_PREVIEW_BODY_LENGTH = 20;
   const ENDPOINTS = {
     analyze: "/api/v1/integrations/outlook/analyze-draft/",
     preview: "/api/v1/integrations/outlook/inline-suggestions/preview/",
@@ -12,6 +15,12 @@
     lastImprovedVersion: "",
     previewSuggestions: [],
     dismissedSuggestionKeys: [],
+    livePreviewEnabled: false,
+    livePreviewPollTimer: null,
+    livePreviewDebounceTimer: null,
+    livePreviewRequestInFlight: false,
+    lastObservedBody: "",
+    lastPreviewedBody: "",
   };
 
   const fields = {};
@@ -27,6 +36,7 @@
         if (state.officeReady) {
           setStatus("Ready. Refresh draft details or analyze the current compose draft.");
           hydrateFromDraft(false);
+          if (state.livePreviewEnabled) startLivePreview();
         } else {
           setStatus("Open this task pane from an Outlook compose draft.", true);
         }
@@ -47,6 +57,7 @@
       "intent",
       "draftMeta",
       "refreshDraftButton",
+      "livePreviewToggle",
       "previewButton",
       "analyzeButton",
       "applyButton",
@@ -59,6 +70,7 @@
 
   function bindEvents() {
     fields.refreshDraftButton.addEventListener("click", () => hydrateFromDraft(true));
+    fields.livePreviewToggle.addEventListener("change", handleLivePreviewToggle);
     fields.previewButton.addEventListener("click", previewInlineSuggestions);
     fields.analyzeButton.addEventListener("click", analyzeDraft);
     fields.applyButton.addEventListener("click", applyImprovedVersion);
@@ -91,6 +103,8 @@
     fields.receiverEmail.value = settings.receiverEmail || "";
     fields.receiverName.value = settings.receiverName || "";
     fields.intent.value = settings.intent || "request";
+    fields.livePreviewToggle.checked = Boolean(settings.livePreviewEnabled);
+    state.livePreviewEnabled = fields.livePreviewToggle.checked;
   }
 
   function saveSettings() {
@@ -102,6 +116,7 @@
       receiverEmail: fields.receiverEmail.value.trim(),
       receiverName: fields.receiverName.value.trim(),
       intent: fields.intent.value,
+      livePreviewEnabled: fields.livePreviewToggle.checked,
     }));
   }
 
@@ -122,6 +137,7 @@
 
       saveSettings();
       renderDraftMeta(draft);
+      state.lastObservedBody = draft.body || "";
       if (announce) setStatus("Draft details refreshed.");
     } catch (error) {
       setStatus(error.message, true);
@@ -163,28 +179,109 @@
     clearResults();
 
     try {
-      const draft = await readDraft();
-      const payload = buildPayload(draft);
-      payload.full_draft = draft.body;
-      payload.changed_text = draft.body.trim();
-      payload.surrounding_context = draft.subject ? `Subject: ${draft.subject}` : "";
-      payload.prior_review_context = state.dismissedSuggestionKeys;
-      delete payload.body;
-      delete payload.subject;
-
-      saveSettings();
-      renderDraftMeta(draft);
-
-      setStatus("Checking inline suggestions...");
-      const data = await postJson(ENDPOINTS.preview, payload);
-      state.previewSuggestions = normalizePreviewSuggestions(data.suggestions || []);
-      renderPreview(data, state.previewSuggestions);
-      setStatus(state.previewSuggestions.length ? `${state.previewSuggestions.length} suggestion(s) ready.` : "No inline suggestions returned.");
+      await runPreviewForCurrentDraft({ manual: true });
     } catch (error) {
       state.previewSuggestions = [];
       setStatus(error.message, true);
     } finally {
       fields.previewButton.disabled = false;
+    }
+  }
+
+  function handleLivePreviewToggle() {
+    state.livePreviewEnabled = fields.livePreviewToggle.checked;
+    saveSettings();
+
+    if (state.livePreviewEnabled) {
+      startLivePreview();
+      setStatus("Live preview enabled. Suggestions will update automatically.");
+    } else {
+      stopLivePreview();
+      setStatus("Live preview disabled.");
+    }
+  }
+
+  function startLivePreview() {
+    stopLivePreview();
+    state.livePreviewPollTimer = setInterval(pollDraftForLivePreview, LIVE_PREVIEW_POLL_MS);
+    pollDraftForLivePreview();
+  }
+
+  function stopLivePreview() {
+    if (state.livePreviewPollTimer) {
+      clearInterval(state.livePreviewPollTimer);
+      state.livePreviewPollTimer = null;
+    }
+    if (state.livePreviewDebounceTimer) {
+      clearTimeout(state.livePreviewDebounceTimer);
+      state.livePreviewDebounceTimer = null;
+    }
+  }
+
+  async function pollDraftForLivePreview() {
+    if (!state.livePreviewEnabled || state.livePreviewRequestInFlight) return;
+
+    try {
+      const draft = await readDraft();
+      renderDraftMeta(draft);
+      const body = draft.body || "";
+      if (body === state.lastObservedBody) return;
+
+      state.lastObservedBody = body;
+      if (body.trim().length < MIN_PREVIEW_BODY_LENGTH) {
+        clearTimeout(state.livePreviewDebounceTimer);
+        state.previewSuggestions = [];
+        state.lastPreviewedBody = "";
+        renderPreview({ suggestions: [] }, []);
+        setStatus(`Live preview waits for at least ${MIN_PREVIEW_BODY_LENGTH} characters.`);
+        return;
+      }
+
+      clearTimeout(state.livePreviewDebounceTimer);
+      state.livePreviewDebounceTimer = setTimeout(() => {
+        runPreviewForCurrentDraft({ manual: false });
+      }, LIVE_PREVIEW_DEBOUNCE_MS);
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  }
+
+  async function runPreviewForCurrentDraft({ manual }) {
+    if (state.livePreviewRequestInFlight) return;
+    state.livePreviewRequestInFlight = true;
+
+    try {
+      const draft = await readDraft();
+      if (draft.body.trim().length < MIN_PREVIEW_BODY_LENGTH) {
+        state.previewSuggestions = [];
+        renderPreview({ suggestions: [] }, []);
+        setStatus(`Type at least ${MIN_PREVIEW_BODY_LENGTH} characters for inline suggestions.`);
+        return;
+      }
+
+      const payload = buildPayload(draft);
+      payload.full_draft = draft.body;
+      payload.changed_text = changedText(state.lastPreviewedBody, draft.body);
+      payload.surrounding_context = draft.subject ? `Subject: ${draft.subject}` : "";
+      payload.prior_review_context = state.dismissedSuggestionKeys;
+      delete payload.body;
+      delete payload.subject;
+
+      if (!payload.changed_text.trim()) return;
+
+      saveSettings();
+      renderDraftMeta(draft);
+      setStatus(manual ? "Checking inline suggestions..." : "Live preview checking suggestions...");
+      const data = await postJson(ENDPOINTS.preview, payload);
+      state.previewSuggestions = normalizePreviewSuggestions(data.suggestions || []);
+      state.lastPreviewedBody = draft.body;
+      renderPreview(data, state.previewSuggestions);
+      setStatus(state.previewSuggestions.length ? `${state.previewSuggestions.length} suggestion(s) ready.` : "No inline suggestions returned.");
+    } catch (error) {
+      if (manual) state.previewSuggestions = [];
+      setStatus(error.message, true);
+    } finally {
+      state.livePreviewRequestInFlight = false;
     }
   }
 
@@ -231,6 +328,8 @@
         suggestion.suggested_replacement,
       );
       await setDraftBody(updatedBody);
+      state.lastObservedBody = updatedBody;
+      state.lastPreviewedBody = updatedBody;
       state.previewSuggestions = state.previewSuggestions.filter((item) => item.local_id !== suggestionId);
       renderPreview({ suggestions: state.previewSuggestions }, state.previewSuggestions);
       setStatus("Suggestion applied to the draft body. Outlook has not sent the email.");
@@ -552,6 +651,13 @@
   function bodyTextForApply(text) {
     const match = String(text || "").match(/^Subject:\s*[^\r\n]*(?:\r?\n){2,}([\s\S]*)$/i);
     return (match ? match[1] : text).trim();
+  }
+
+  function changedText(previousBody, currentBody) {
+    const previous = previousBody || "";
+    const current = currentBody || "";
+    if (!previous || !current.startsWith(previous)) return current.trim();
+    return current.slice(previous.length).trim() || current.trim();
   }
 
   function normalizePreviewSuggestions(suggestions) {

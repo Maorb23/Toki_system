@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Target Audience Interactive Worksheet</title>
+
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --text: #172033;
+      --muted: #6b7280;
+      --primary: #2563eb;
+      --primary-soft: #dbeafe;
+      --border: #d8dee9;
+      --danger: #dc2626;
+      --success: #16a34a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1e3a8a, #2563eb);
+      color: white;
+      padding: 32px 20px;
+      text-align: center;
+    }
+
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+    }
+
+    header p {
+      margin: 0;
+      opacity: 0.9;
+    }
+
+    main {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 16px 40px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 20px;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .toolbar-left,
+    .toolbar-right {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      background: var(--primary);
+      color: white;
+      transition: 0.2s;
+    }
+
+    button:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+
+    button.secondary {
+      background: #475569;
+    }
+
+    button.success {
+      background: var(--success);
+    }
+
+    button.danger {
+      background: var(--danger);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    @media (max-width: 800px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+    }
+
+    .card.full {
+      grid-column: 1 / -1;
+    }
+
+    .card h2 {
+      margin-top: 0;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge {
+      background: var(--primary-soft);
+      color: #1e40af;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 6px;
+      font-weight: bold;
+      font-size: 14px;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 15px;
+      font-family: inherit;
+      background: white;
+      color: var(--text);
+    }
+
+    textarea {
+      min-height: 95px;
+      resize: vertical;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+      outline: 2px solid var(--primary-soft);
+      border-color: var(--primary);
+    }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    @media (max-width: 650px) {
+      .field-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .hint {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .question {
+      background: #f8fafc;
+      border-left: 5px solid var(--primary);
+      padding: 14px;
+      border-radius: 12px;
+      margin-bottom: 14px;
+    }
+
+    .question strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 16px;
+    }
+
+    .pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pill {
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      color: #3730a3;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+    }
+
+    .output {
+      white-space: pre-wrap;
+      background: #0f172a;
+      color: #e5e7eb;
+      padding: 18px;
+      border-radius: 14px;
+      min-height: 220px;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 14px;
+      overflow-x: auto;
+    }
+
+    .small-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .autosave {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .section-title {
+      margin-top: 0;
+      margin-bottom: 12px;
+      font-size: 18px;
+      color: #111827;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 18px 0;
+    }
+
+    @media print {
+      header,
+      .toolbar,
+      .small-actions {
+        display: none;
+      }
+
+      body {
+        background: white;
+      }
+
+      .card {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Target Audience Worksheet</h1>
+    <p>Fill in demographics, psychographics, pains, motivations, decision factors, and unique insights.</p>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <button onclick="generateSummary()">Generate Summary</button>
+        <button class="success" onclick="copySummary()">Copy Summary</button>
+        <button class="secondary" onclick="exportJSON()">Export JSON</button>
+        <button class="secondary" onclick="window.print()">Print / Save PDF</button>
+      </div>
+
+      <div class="toolbar-right">
+        <button class="danger" onclick="clearForm()">Clear Form</button>
+      </div>
+    </div>
+
+    <p class="autosave" id="autosaveStatus">Autosave is active.</p>
+
+    <form id="worksheetForm">
+      <div class="grid">
+
+        <section class="card full">
+          <h2>1. Who is benefiting from your offering? <span class="badge">Audience</span></h2>
+
+          <label for="audienceName">Audience / Persona Name</label>
+          <input id="audienceName" name="audienceName" placeholder="Example: Busy HR managers in mid-sized tech companies" />
+
+          <label for="offering">Your Product / Offering</label>
+          <input id="offering" name="offering" placeholder="Example: AI communication assistant for internal workplace messages" />
+
+          <label for="benefit">Core Benefit</label>
+          <textarea id="benefit" name="benefit" placeholder="Describe who benefits and what improvement they get."></textarea>
+        </section>
+
+        <section class="card">
+          <h2>2. Demographics <span class="badge">Who they are</span></h2>
+
+          <div class="field-row">
+            <div>
+              <label for="age">Age</label>
+              <input id="age" name="age" placeholder="Example: 30–55" />
+            </div>
+
+            <div>
+              <label for="gender">Gender</label>
+              <input id="gender" name="gender" placeholder="Example: Any / mostly..." />
+            </div>
+          </div>
+
+          <div class="field-row">
+            <div>
+              <label for="income">Income Level</label>
+              <input id="income" name="income" placeholder="Example: Mid-high income" />
+            </div>
+
+            <div>
+              <label for="education">Education</label>
+              <input id="education" name="education" placeholder="Example: BA / MBA / technical degree" />
+            </div>
+          </div>
+
+          <label for="occupation">Occupation</label>
+          <input id="occupation" name="occupation" placeholder="Example: VP R&D, HR manager, team lead" />
+
+          <label for="location">Location</label>
+          <input id="location" name="location" placeholder="Example: US, Israel, Europe, remote-first companies" />
+
+          <label for="socioEconomic">Socio-economic Background</label>
+          <textarea id="socioEconomic" name="socioEconomic" placeholder="Describe financial stability, work environment, lifestyle, access to resources, etc."></textarea>
+        </section>
+
+        <section class="card">
+          <h2>3. Psychographics <span class="badge">How they think</span></h2>
+
+          <label for="beliefs">Beliefs and Values</label>
+          <textarea id="beliefs" name="beliefs" placeholder="What do they believe is important?"></textarea>
+
+          <label for="motivations">Motivations and Aspirations</label>
+          <textarea id="motivations" name="motivations" placeholder="What are they trying to achieve professionally or personally?"></textarea>
+
+          <label for="lifestyle">Lifestyle and Interests</label>
+          <textarea id="lifestyle" name="lifestyle" placeholder="How do they work, spend time, consume information, and make choices?"></textarea>
+
+          <label for="fears">Fears and Concerns</label>
+          <textarea id="fears" name="fears" placeholder="What are they afraid might go wrong?"></textarea>
+
+          <label for="dreams">Dreams and Desired Future</label>
+          <textarea id="dreams" name="dreams" placeholder="What would an ideal future look like for them?"></textarea>
+        </section>
+
+        <section class="card">
+          <h2>4. Needs and Pains <span class="badge">Problems</span></h2>
+
+          <div class="question">
+            <strong>What are their needs?</strong>
+            <textarea id="needs" name="needs" placeholder="Functional, emotional, social, business, or technical needs."></textarea>
+          </div>
+
+          <div class="question">
+            <strong>What are their pains?</strong>
+            <textarea id="pains" name="pains" placeholder="Frictions, frustrations, inefficiencies, risks, or recurring problems."></textarea>
+          </div>
+
+          <div class="question">
+            <strong>What are they currently doing instead?</strong>
+            <textarea id="currentAlternatives" name="currentAlternatives" placeholder="Manual work, spreadsheets, existing tools, ignoring the problem, hiring consultants, etc."></textarea>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>5. Main Motivation <span class="badge">Why now</span></h2>
+
+          <label for="mainMotivation">What is their main motivation for using your product?</label>
+          <textarea id="mainMotivation" name="mainMotivation" placeholder="Describe the strongest reason they would adopt your product."></textarea>
+
+          <label for="trigger">What trigger makes them search for a solution?</label>
+          <textarea id="trigger" name="trigger" placeholder="Example: missed deadline, team conflict, compliance issue, scaling pain, cost pressure."></textarea>
+
+          <label for="successOutcome">What does success look like for them?</label>
+          <textarea id="successOutcome" name="successOutcome" placeholder="Describe the measurable or emotional result they want."></textarea>
+        </section>
+
+        <section class="card">
+          <h2>6. Decision-Making Factors <span class="badge">Buying logic</span></h2>
+
+          <label for="decisionFactors">Key factors that influence their decision-making</label>
+          <textarea id="decisionFactors" name="decisionFactors" placeholder="Price, trust, ROI, ease of use, privacy, integrations, speed, social proof, brand, support, etc."></textarea>
+
+          <label for="objections">Likely Objections</label>
+          <textarea id="objections" name="objections" placeholder="Why might they hesitate or say no?"></textarea>
+
+          <label for="decisionMakers">Who else influences the decision?</label>
+          <textarea id="decisionMakers" name="decisionMakers" placeholder="Manager, CFO, IT, legal, HR, team members, spouse, friends, etc."></textarea>
+
+          <label for="proofNeeded">Proof they need before saying yes</label>
+          <textarea id="proofNeeded" name="proofNeeded" placeholder="Case studies, demo, pilot, testimonials, security docs, measurable ROI, etc."></textarea>
+        </section>
+
+        <section class="card">
+          <h2>7. Unique Insight / Understanding <span class="badge">Strategy</span></h2>
+
+          <label for="uniqueInsight">What is your unique insight about the market, problem, or audience?</label>
+          <textarea id="uniqueInsight" name="uniqueInsight" placeholder="Write the non-obvious thing you understand better than others."></textarea>
+
+          <label for="positioning">Positioning Statement</label>
+          <textarea id="positioning" name="positioning" placeholder="For [audience], who struggle with [pain], our product helps them [benefit] unlike [alternative], because [unique insight]."></textarea>
+
+          <div class="pill-list">
+            <span class="pill">Market insight</span>
+            <span class="pill">Emotional insight</span>
+            <span class="pill">Decision insight</span>
+            <span class="pill">Adoption barrier</span>
+            <span class="pill">Hidden pain</span>
+          </div>
+        </section>
+
+        <section class="card full">
+          <h2>Generated Summary <span class="badge">Copy-ready</span></h2>
+          <div id="summaryOutput" class="output">Click “Generate Summary” to create a structured audience summary.</div>
+
+          <div class="small-actions">
+            <button type="button" onclick="generatePrompt()">Generate AI Prompt</button>
+            <button type="button" class="success" onclick="copySummary()">Copy Text</button>
+          </div>
+        </section>
+
+      </div>
+    </form>
+  </main>
+
+  <script>
+    const form = document.getElementById("worksheetForm");
+    const output = document.getElementById("summaryOutput");
+    const autosaveStatus = document.getElementById("autosaveStatus");
+    const STORAGE_KEY = "targetAudienceWorksheet";
+
+    const fields = [
+      "audienceName",
+      "offering",
+      "benefit",
+      "age",
+      "gender",
+      "income",
+      "education",
+      "occupation",
+      "location",
+      "socioEconomic",
+      "beliefs",
+      "motivations",
+      "lifestyle",
+      "fears",
+      "dreams",
+      "needs",
+      "pains",
+      "currentAlternatives",
+      "mainMotivation",
+      "trigger",
+      "successOutcome",
+      "decisionFactors",
+      "objections",
+      "decisionMakers",
+      "proofNeeded",
+      "uniqueInsight",
+      "positioning"
+    ];
+
+    function getData() {
+      const data = {};
+      fields.forEach(id => {
+        data[id] = document.getElementById(id).value.trim();
+      });
+      return data;
+    }
+
+    function setData(data) {
+      fields.forEach(id => {
+        if (data[id] !== undefined) {
+          document.getElementById(id).value = data[id];
+        }
+      });
+    }
+
+    function saveData() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(getData()));
+      autosaveStatus.textContent = "Saved automatically at " + new Date().toLocaleTimeString();
+    }
+
+    function loadData() {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        setData(JSON.parse(saved));
+        autosaveStatus.textContent = "Loaded saved worksheet.";
+      }
+    }
+
+    form.addEventListener("input", saveData);
+
+    function generateSummary() {
+      const d = getData();
+
+      output.textContent =
+`TARGET AUDIENCE SUMMARY
+
+1. Who is benefiting from the offering?
+Audience / Persona:
+${d.audienceName || "[Not filled]"}
+
+Product / Offering:
+${d.offering || "[Not filled]"}
+
+Core Benefit:
+${d.benefit || "[Not filled]"}
+
+
+2. Demographics
+Age: ${d.age || "[Not filled]"}
+Gender: ${d.gender || "[Not filled]"}
+Income Level: ${d.income || "[Not filled]"}
+Education: ${d.education || "[Not filled]"}
+Occupation: ${d.occupation || "[Not filled]"}
+Location: ${d.location || "[Not filled]"}
+Socio-economic Background:
+${d.socioEconomic || "[Not filled]"}
+
+
+3. Psychographics
+Beliefs and Values:
+${d.beliefs || "[Not filled]"}
+
+Motivations and Aspirations:
+${d.motivations || "[Not filled]"}
+
+Lifestyle and Interests:
+${d.lifestyle || "[Not filled]"}
+
+Fears and Concerns:
+${d.fears || "[Not filled]"}
+
+Dreams and Desired Future:
+${d.dreams || "[Not filled]"}
+
+
+4. Needs and Pains
+Needs:
+${d.needs || "[Not filled]"}
+
+Pains:
+${d.pains || "[Not filled]"}
+
+Current Alternatives:
+${d.currentAlternatives || "[Not filled]"}
+
+
+5. Main Motivation
+Main Motivation:
+${d.mainMotivation || "[Not filled]"}
+
+Trigger:
+${d.trigger || "[Not filled]"}
+
+Success Outcome:
+${d.successOutcome || "[Not filled]"}
+
+
+6. Decision-Making Factors
+Decision Factors:
+${d.decisionFactors || "[Not filled]"}
+
+Likely Objections:
+${d.objections || "[Not filled]"}
+
+Other Decision Influencers:
+${d.decisionMakers || "[Not filled]"}
+
+Proof Needed:
+${d.proofNeeded || "[Not filled]"}
+
+
+7. Unique Insight / Understanding
+Unique Insight:
+${d.uniqueInsight || "[Not filled]"}
+
+Positioning Statement:
+${d.positioning || "[Not filled]"}`;
+    }
+
+    function generatePrompt() {
+      const d = getData();
+
+      output.textContent =
+`You are a senior marketing strategist and product positioning expert.
+
+Analyze the following target audience and turn it into:
+1. A clear customer persona
+2. Their main pains and needs
+3. Their buying motivations
+4. Their objections
+5. A sharp positioning statement
+6. Messaging angles for landing page, sales pitch, and ads
+
+Audience:
+${d.audienceName || "[Not filled]"}
+
+Product / Offering:
+${d.offering || "[Not filled]"}
+
+Core Benefit:
+${d.benefit || "[Not filled]"}
+
+Demographics:
+- Age: ${d.age || "[Not filled]"}
+- Gender: ${d.gender || "[Not filled]"}
+- Income: ${d.income || "[Not filled]"}
+- Education: ${d.education || "[Not filled]"}
+- Occupation: ${d.occupation || "[Not filled]"}
+- Location: ${d.location || "[Not filled]"}
+- Socio-economic background: ${d.socioEconomic || "[Not filled]"}
+
+Psychographics:
+- Beliefs and values: ${d.beliefs || "[Not filled]"}
+- Motivations and aspirations: ${d.motivations || "[Not filled]"}
+- Lifestyle and interests: ${d.lifestyle || "[Not filled]"}
+- Fears: ${d.fears || "[Not filled]"}
+- Dreams: ${d.dreams || "[Not filled]"}
+
+Needs:
+${d.needs || "[Not filled]"}
+
+Pains:
+${d.pains || "[Not filled]"}
+
+Current Alternatives:
+${d.currentAlternatives || "[Not filled]"}
+
+Main Motivation:
+${d.mainMotivation || "[Not filled]"}
+
+Decision Factors:
+${d.decisionFactors || "[Not filled]"}
+
+Objections:
+${d.objections || "[Not filled]"}
+
+Proof Needed:
+${d.proofNeeded || "[Not filled]"}
+
+Unique Insight:
+${d.uniqueInsight || "[Not filled]"}
+
+Current Positioning Statement:
+${d.positioning || "[Not filled]"}`;
+    }
+
+    async function copySummary() {
+      const text = output.textContent;
+      await navigator.clipboard.writeText(text);
+      autosaveStatus.textContent = "Copied to clipboard.";
+    }
+
+    function exportJSON() {
+      const data = getData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json"
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "target-audience-worksheet.json";
+      a.click();
+
+      URL.revokeObjectURL(url);
+      autosaveStatus.textContent = "Exported JSON file.";
+    }
+
+    function clearForm() {
+      const confirmed = confirm("Clear all fields and delete saved data?");
+      if (!confirmed) return;
+
+      fields.forEach(id => {
+        document.getElementById(id).value = "";
+      });
+
+      localStorage.removeItem(STORAGE_KEY);
+      output.textContent = "Click “Generate Summary” to create a structured audience summary.";
+      autosaveStatus.textContent = "Form cleared.";
+    }
+
+    loadData();
+  </script>
+</body>
+</html>

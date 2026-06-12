@@ -112,6 +112,23 @@ button:focus-visible {
   box-shadow: var(--shadow);
 }
 
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.toggle-row input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 #draftMeta {
   color: var(--muted);
   font-size: 12px;

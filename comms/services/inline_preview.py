@@ -19,37 +19,38 @@ from comms.services.weave_monitor import (
 )
 
 
-INLINE_PREVIEW_BASE_TOOLS = [
-    "get_company_context",
-    "get_receiver_profile",
-    "retrieve_company_patterns",
-]
-
-INLINE_PREVIEW_CONTEXT_KEYWORDS = {
-    "company",
-    "customer",
-    "deadline",
-    "meeting",
-    "milestone",
-    "project",
-    "q1",
-    "q2",
-    "q3",
-    "q4",
-    "roadmap",
-    "schedule",
-    "sprint",
-    "sync",
-    "team",
-}
-
 INLINE_PREVIEW_WRITE_INTENT_PATTERN = re.compile(
     r"\b(remember|save|store|update|learn|note)\b.*\b(prefers?|preference|pattern|likes?|wants?)\b",
     re.IGNORECASE,
 )
 
+INLINE_PREVIEW_PROJECT_LOOKUP_PATTERN = re.compile(
+    r"\b(project|prokject|projerc|initiative|workstream|roadmap|sprint|milestone|q[1-4])\b",
+    re.IGNORECASE,
+)
+INLINE_PREVIEW_MEETING_LOOKUP_PATTERN = re.compile(
+    r"\b(meeting|sync|schedule|calendar|talk|call|roadmap review|review)\b|\bq[1-4]\b",
+    re.IGNORECASE,
+)
+INLINE_PREVIEW_COMPANY_LOOKUP_PATTERN = re.compile(
+    r"\b(company|org|organization|team|values?|policy|priorit(?:y|ies)|standard|customer needs?)\b",
+    re.IGNORECASE,
+)
+INLINE_PREVIEW_RECEIVER_LOOKUP_PATTERN = re.compile(
+    r"\b(receiver|recipient|dana|dan|their style|prefers?|preference)\b",
+    re.IGNORECASE,
+)
+INLINE_PREVIEW_ENTITY_NAME_PATTERN = re.compile(
+    r"\b[A-Z][a-zA-Z]{3,}\s+[A-Z][a-zA-Z]{3,}(?:\s+[A-Z][a-zA-Z]{3,})?\b"
+)
+INLINE_PREVIEW_ENTITY_CONTEXT_ASK_PATTERN = re.compile(
+    r"\b(what(?:'s| is)?|next|phase|status|update|timeline|when|complete|deadline|fix|improve|implement|meeting|review|about)\b|\?",
+    re.IGNORECASE,
+)
+
 TYPO_NORMALIZATIONS = {
     "projerc": "project",
+    "prokject": "project",
     "projec": "project",
     "projet": "project",
     "road map": "roadmap",
@@ -184,36 +185,43 @@ def _select_preview_tools(
     surrounding_context: str,
     prior_review_context: list[dict] | None = None,
 ) -> tuple[str, list[str]]:
-    text = _normalize_routing_text(" ".join([
+    raw_text = " ".join([
         changed_text or "",
         surrounding_context or "",
         _prior_review_text(prior_review_context),
-    ]))
+    ])
+    text = _normalize_routing_text(raw_text)
     if not text.strip():
         return "bypass", []
 
     selected_tools: list[str] = []
-    has_context_signal = any(
-        re.search(rf"\b{re.escape(keyword)}\b", text)
-        for keyword in INLINE_PREVIEW_CONTEXT_KEYWORDS
-    )
-    if has_context_signal or re.search(r"\bwith\s+[a-z][a-z]+\b", text):
-        selected_tools.extend(INLINE_PREVIEW_BASE_TOOLS)
-
-    if re.search(r"\b(project|roadmap|sprint|milestone|q[1-4])\b", text):
+    if INLINE_PREVIEW_PROJECT_LOOKUP_PATTERN.search(text):
         selected_tools.append("suggest_related_projects")
 
-    if re.search(r"\b(meeting|sync|schedule|calendar|talk|call|roadmap|q[1-4])\b", text):
-        if not selected_tools:
-            selected_tools.extend(INLINE_PREVIEW_BASE_TOOLS)
+    if _has_entity_context_ask(raw_text):
+        selected_tools.append("suggest_related_projects")
+
+    if INLINE_PREVIEW_MEETING_LOOKUP_PATTERN.search(text):
         selected_tools.append("suggest_meeting_context")
 
     if INLINE_PREVIEW_WRITE_INTENT_PATTERN.search(text):
-        if not selected_tools:
-            selected_tools.extend(INLINE_PREVIEW_BASE_TOOLS)
+        selected_tools.append("update_receiver_preference")
+
+    if INLINE_PREVIEW_COMPANY_LOOKUP_PATTERN.search(text):
+        selected_tools.extend(["get_company_context", "retrieve_company_patterns"])
+
+    if INLINE_PREVIEW_RECEIVER_LOOKUP_PATTERN.search(text) or re.search(r"\bwith\s+[a-z][a-z]+\b", text):
+        selected_tools.append("get_receiver_profile")
 
     selected_tools = _dedupe(selected_tools)
     return ("preview_with_context" if selected_tools else "preview", selected_tools)
+
+
+def _has_entity_context_ask(raw_text: str) -> bool:
+    return bool(
+        INLINE_PREVIEW_ENTITY_NAME_PATTERN.search(raw_text or "")
+        and INLINE_PREVIEW_ENTITY_CONTEXT_ASK_PATTERN.search(raw_text or "")
+    )
 
 
 def _normalize_routing_text(value: str) -> str:

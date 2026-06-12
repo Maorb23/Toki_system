@@ -149,6 +149,14 @@ For lightweight review before full analysis:
 3. Click `Apply` on a suggestion to replace the first matching target text in the Outlook draft body.
 4. Click `Dismiss` to hide a suggestion and log the rejection event.
 
+For live preview:
+
+1. Turn on `Live Preview`.
+2. The task pane polls the Outlook draft body every 750 ms.
+3. Backend preview calls are debounced by 1200 ms after a body change.
+4. Suggestions update automatically in the task pane.
+5. Applying or dismissing suggestions remains explicit.
+
 ## What It Does
 
 - Reads compose subject, body, and To recipients through Office.js.
@@ -156,6 +164,7 @@ For lightweight review before full analysis:
 - Calls the Outlook integration endpoint with a simple integration token.
 - Shows backend scores, suggestions, improved version, short version, explanation, and dashboard link.
 - Previews inline suggestions as task pane cards.
+- Can live-preview suggestions while the task pane is open.
 - Lets the user explicitly apply or dismiss each preview suggestion.
 - Replaces the draft body only after the user clicks `Apply Improved Version`.
 - Logs an Outlook apply event when possible.
@@ -180,3 +189,4 @@ For lightweight review before full analysis:
 - Unknown receivers are created as demo receiver profiles, matching the demo integration behavior.
 - Inline suggestions are displayed as review cards, not in-place highlights.
 - Applying a preview suggestion replaces the first exact text match in the plain-text draft body.
+- Live preview polls Office.js for the body because Outlook does not expose Gmail-style compose DOM events.

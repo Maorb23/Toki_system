@@ -205,10 +205,52 @@ class CommunicationGraphTests(TestCase):
         self.assertFalse(simple["metadata"]["used_tools"])
         self.assertEqual(contextual["metadata"]["route"], "rewrite_with_context")
         self.assertTrue(contextual["metadata"]["used_tools"])
-        self.assertIn("get_company_context", contextual["metadata"]["tools_called"])
         self.assertIn("suggest_related_projects", contextual["metadata"]["tools_called"])
+        self.assertIn("suggest_meeting_context", contextual["metadata"]["tools_called"])
+        self.assertIn("get_receiver_profile", contextual["metadata"]["tools_called"])
+        self.assertNotIn("get_company_context", contextual["metadata"]["tools_called"])
+        self.assertNotIn("retrieve_company_patterns", contextual["metadata"]["tools_called"])
         self.assertEqual(contextual["tool_results"]["suggest_related_projects"][0]["name"], "Q3 Roadmap Alignment")
         self.assertEqual(contextual["tool_results"]["suggest_meeting_context"]["relevant_meetings"][0]["title"], "Q3 Roadmap Review")
+
+    def test_typo_cleanup_and_specific_context_tools_can_coexist(self):
+        state = self._run("What about the prokject roadmap meeting with Dan?")
+
+        self.assertEqual(state["metadata"]["route"], "rewrite_with_context")
+        self.assertIn("typo_cleanup", state["metadata"]["nodes_executed"])
+        self.assertEqual(self.last_legacy_message, "What about the project roadmap meeting with Dan?")
+        self.assertIn("suggest_related_projects", state["metadata"]["tools_called"])
+        self.assertIn("suggest_meeting_context", state["metadata"]["tools_called"])
+        self.assertIn("get_receiver_profile", state["metadata"]["tools_called"])
+        self.assertNotIn("get_company_context", state["metadata"]["tools_called"])
+        self.assertNotIn("retrieve_company_patterns", state["metadata"]["tools_called"])
+
+    def test_plain_typo_does_not_use_context_tools(self):
+        state = self._run("abboput")
+
+        self.assertFalse(state["metadata"]["used_tools"])
+        self.assertNotIn("context_tools", state["metadata"]["nodes_executed"])
+
+    def test_entity_name_typo_uses_lookup_only_when_context_is_requested(self):
+        ProjectContext.objects.create(
+            organization=self.org,
+            name="Strategic Operations",
+            description="Cross-functional operations initiative for strategic planning.",
+            status=ProjectContext.Status.ACTIVE,
+            priority="high",
+            team=self.team,
+            owner=self.receiver,
+        )
+
+        bare_entity = self._run("Stratigic Operations")
+        contextual_entity = self._run("What's next for Stratigic Operations?")
+
+        self.assertFalse(bare_entity["metadata"]["used_tools"])
+        self.assertEqual(contextual_entity["metadata"]["route"], "rewrite_with_context")
+        self.assertIn("suggest_related_projects", contextual_entity["metadata"]["tools_called"])
+        self.assertNotIn("get_company_context", contextual_entity["metadata"]["tools_called"])
+        self.assertNotIn("retrieve_company_patterns", contextual_entity["metadata"]["tools_called"])
+        self.assertEqual(contextual_entity["tool_results"]["suggest_related_projects"][0]["name"], "Strategic Operations")
 
     def test_weave_traces_nodes_tools_and_execution_summary(self):
         trace_calls = []
@@ -229,8 +271,8 @@ class CommunicationGraphTests(TestCase):
         self.assertIn("communication_agent.graph_run", names)
         self.assertIn("communication_agent.node.input_normalizer", names)
         self.assertIn("communication_agent.node.context_tools", names)
-        self.assertIn("communication_agent.tool.get_company_context", names)
         self.assertIn("communication_agent.tool.suggest_related_projects", names)
+        self.assertIn("communication_agent.tool.suggest_meeting_context", names)
         self.assertIn("communication_agent.execution_summary", names)
 
         summary_call = next(call for call in trace_calls if call["name"] == "communication_agent.execution_summary")
@@ -248,7 +290,7 @@ class CommunicationGraphTests(TestCase):
         self.assertIn("concise bullet points", self.receiver.communication_preferences["agent_saved_preferences"])
 
     def test_company_context_is_available_when_selected(self):
-        state = self._run("lets talk about q3 roadmap with dan")
+        state = self._run("How does this align with our company values and customer standards?")
 
         company_context = state["tool_results"]["get_company_context"]
         self.assertEqual(company_context["name"], "Graph Org")
@@ -511,6 +553,8 @@ class InlinePreviewWeaveTests(TestCase):
         self.assertIn("communication_agent.inline_preview.node.final_response", names)
         self.assertIn("communication_agent.inline_preview.execution_summary", names)
         self.assertIn("communication_agent.inline_preview.tool.suggest_meeting_context", names)
+        self.assertNotIn("communication_agent.inline_preview.tool.get_company_context", names)
+        self.assertNotIn("communication_agent.inline_preview.tool.retrieve_company_patterns", names)
 
         outer_call = next(call for call in trace_calls if call["name"] == "communication_agent.inline_preview")
         final_call = next(call for call in trace_calls if call["name"] == "communication_agent.inline_preview.node.final_response")
@@ -523,6 +567,81 @@ class InlinePreviewWeaveTests(TestCase):
         self.assertNotIn("content", final_call["output"])
         self.assertEqual(result["text_hash"], "c1f4b6ab7ffd")
         self.assertEqual(client.calls, 1)
+
+    def test_inline_preview_routes_only_relevant_tools_for_mixed_typo_and_context(self):
+        trace_calls = []
+        previewer = InlineSuggestionPreviewer(llm_client=FakeEmptyInlineLLMClient())
+
+        def fake_trace_operation(name, inputs, operation, *, output=None):
+            result = operation()
+            trace_calls.append({
+                "name": name,
+                "inputs": inputs,
+                "output": output(result) if output else None,
+            })
+            return result
+
+        with patch("comms.services.inline_preview.trace_operation", side_effect=fake_trace_operation):
+            previewer.preview(
+                sender=self.sender,
+                receiver=self.receiver,
+                channel=Message.Channel.SLACK,
+                intent=Message.Intent.REQUEST,
+                full_draft="What about the prokject roadmap meeting with Dana?",
+                changed_text="What about the prokject roadmap meeting with Dana?",
+                surrounding_context="",
+            )
+
+        outer_call = next(call for call in trace_calls if call["name"] == "communication_agent.inline_preview")
+        tools_called = outer_call["output"]["tools_called"]
+        self.assertIn("suggest_related_projects", tools_called)
+        self.assertIn("suggest_meeting_context", tools_called)
+        self.assertIn("get_receiver_profile", tools_called)
+        self.assertNotIn("get_company_context", tools_called)
+        self.assertNotIn("retrieve_company_patterns", tools_called)
+
+    def test_inline_preview_plain_typo_stays_tool_free_but_entity_context_routes(self):
+        ProjectContext.objects.create(
+            organization=self.org,
+            name="Strategic Operations",
+            description="Cross-functional operations initiative for strategic planning.",
+            status=ProjectContext.Status.ACTIVE,
+            priority="high",
+            team=self.team,
+            owner=self.receiver,
+        )
+        previewer = InlineSuggestionPreviewer(llm_client=FakeEmptyInlineLLMClient())
+
+        def run_and_collect_tools(changed_text):
+            trace_calls = []
+
+            def fake_trace_operation(name, inputs, operation, *, output=None):
+                result = operation()
+                trace_calls.append({
+                    "name": name,
+                    "inputs": inputs,
+                    "output": output(result) if output else None,
+                })
+                return result
+
+            with patch("comms.services.inline_preview.trace_operation", side_effect=fake_trace_operation):
+                previewer.preview(
+                    sender=self.sender,
+                    receiver=self.receiver,
+                    channel=Message.Channel.SLACK,
+                    intent=Message.Intent.REQUEST,
+                    full_draft=changed_text,
+                    changed_text=changed_text,
+                    surrounding_context="",
+                )
+            outer_call = next(call for call in trace_calls if call["name"] == "communication_agent.inline_preview")
+            return outer_call["output"]["tools_called"]
+
+        self.assertEqual(run_and_collect_tools("abboput"), [])
+        contextual_tools = run_and_collect_tools("What's next for Stratigic Operations?")
+        self.assertIn("suggest_related_projects", contextual_tools)
+        self.assertNotIn("get_company_context", contextual_tools)
+        self.assertNotIn("retrieve_company_patterns", contextual_tools)
 
     def test_inline_preview_trace_content_is_opt_in_and_project_name_is_suggested(self):
         ProjectContext.objects.create(

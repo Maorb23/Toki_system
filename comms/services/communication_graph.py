@@ -82,24 +82,6 @@ BYPASS_MESSAGES = {
     "looks good",
 }
 
-CONTEXT_KEYWORDS = {
-    "company",
-    "customer",
-    "deadline",
-    "meeting",
-    "milestone",
-    "project",
-    "q1",
-    "q2",
-    "q3",
-    "q4",
-    "roadmap",
-    "schedule",
-    "sprint",
-    "sync",
-    "team",
-}
-
 TONE_REWRITE_PATTERNS = [
     r"\basap\b",
     r"\bfix it\b",
@@ -117,6 +99,30 @@ WRITE_INTENT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+PROJECT_LOOKUP_PATTERN = re.compile(
+    r"\b(project|prokject|projerc|initiative|workstream|roadmap|sprint|milestone|q[1-4])\b",
+    re.IGNORECASE,
+)
+MEETING_LOOKUP_PATTERN = re.compile(
+    r"\b(meeting|sync|schedule|calendar|talk|call|roadmap review|review)\b|\bq[1-4]\b",
+    re.IGNORECASE,
+)
+COMPANY_LOOKUP_PATTERN = re.compile(
+    r"\b(company|org|organization|team|values?|policy|priorit(?:y|ies)|standard|customer needs?)\b",
+    re.IGNORECASE,
+)
+RECEIVER_LOOKUP_PATTERN = re.compile(
+    r"\b(receiver|recipient|dana|dan|their style|prefers?|preference)\b",
+    re.IGNORECASE,
+)
+ENTITY_NAME_PATTERN = re.compile(
+    r"\b[A-Z][a-zA-Z]{3,}\s+[A-Z][a-zA-Z]{3,}(?:\s+[A-Z][a-zA-Z]{3,})?\b"
+)
+ENTITY_CONTEXT_ASK_PATTERN = re.compile(
+    r"\b(what(?:'s| is)?|next|phase|status|update|timeline|when|complete|deadline|fix|improve|implement|meeting|review|about)\b|\?",
+    re.IGNORECASE,
+)
+
 COMMON_TYPO_REPLACEMENTS = {
     "reciever": "receiver",
     "recievers": "receivers",
@@ -130,6 +136,9 @@ COMMON_TYPO_REPLACEMENTS = {
     "isnt": "isn't",
     "arent": "aren't",
     "lets": "let's",
+    "projerc": "project",
+    "prokject": "project",
+    "projec": "project",
 }
 
 MERMAID_GRAPH = """graph TD
@@ -237,7 +246,7 @@ def route_message(message: str) -> Route:
     if WRITE_INTENT_PATTERN.search(text):
         return "rewrite_with_context"
 
-    if _has_context_signal(lowered):
+    if _has_context_signal(text):
         return "rewrite_with_context"
 
     if any(re.search(pattern, lowered) for pattern in TONE_REWRITE_PATTERNS):
@@ -310,12 +319,42 @@ def _preserve_case(original: str, replacement: str) -> str:
     return replacement
 
 
-def _has_context_signal(lowered: str) -> bool:
-    if any(re.search(rf"\b{re.escape(keyword)}\b", lowered) for keyword in CONTEXT_KEYWORDS):
-        return True
-    if re.search(r"\bwith\s+[a-z][a-z]+\b", lowered):
-        return True
-    return False
+def _has_context_signal(message: str) -> bool:
+    return bool(_select_context_tools(message))
+
+
+def _select_context_tools(message: str) -> list[str]:
+    lowered = (message or "").lower()
+    selected_tools: list[str] = []
+
+    if PROJECT_LOOKUP_PATTERN.search(lowered):
+        selected_tools.append("suggest_related_projects")
+
+    if _has_entity_context_ask(message):
+        selected_tools.append("suggest_related_projects")
+
+    if MEETING_LOOKUP_PATTERN.search(lowered):
+        selected_tools.append("suggest_meeting_context")
+
+    if WRITE_INTENT_PATTERN.search(message or ""):
+        selected_tools.append("update_receiver_preference")
+        if COMPANY_LOOKUP_PATTERN.search(lowered):
+            selected_tools.append("save_company_pattern")
+
+    if COMPANY_LOOKUP_PATTERN.search(lowered):
+        selected_tools.extend(["get_company_context", "retrieve_company_patterns"])
+
+    if RECEIVER_LOOKUP_PATTERN.search(lowered) or re.search(r"\bwith\s+[a-z][a-z]+\b", lowered):
+        selected_tools.append("get_receiver_profile")
+
+    return _dedupe(selected_tools)
+
+
+def _has_entity_context_ask(message: str) -> bool:
+    return bool(
+        ENTITY_NAME_PATTERN.search(message or "")
+        and ENTITY_CONTEXT_ASK_PATTERN.search(message or "")
+    )
 
 
 def _meaningful_tokens(text: str) -> set[str]:
@@ -530,25 +569,7 @@ class CommunicationGraphRunner:
         next_state = dict(state)
         try:
             message = state.get("normalized_message", "")
-            lowered = message.lower()
-            selected_tools = [
-                "get_company_context",
-                "get_receiver_profile",
-                "retrieve_company_patterns",
-            ]
-
-            if re.search(r"\b(project|roadmap|sprint|milestone|q[1-4])\b", lowered):
-                selected_tools.append("suggest_related_projects")
-
-            if re.search(r"\b(meeting|sync|schedule|calendar|talk|call|roadmap|q[1-4])\b", lowered):
-                selected_tools.append("suggest_meeting_context")
-
-            if WRITE_INTENT_PATTERN.search(message):
-                selected_tools.append("update_receiver_preference")
-                if re.search(r"\b(company|team|organization|pattern)\b", lowered):
-                    selected_tools.append("save_company_pattern")
-
-            next_state["selected_tools"] = _dedupe(selected_tools)
+            next_state["selected_tools"] = _select_context_tools(message)
             next_state["needs_context"] = bool(next_state["selected_tools"])
         except Exception as exc:
             next_state["metadata"] = update_node_metadata(next_state, "tool_selector", start, str(exc))
