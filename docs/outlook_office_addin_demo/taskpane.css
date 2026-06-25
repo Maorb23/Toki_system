@@ -191,6 +191,31 @@ button:disabled {
   background: #fff1f0;
 }
 
+.debug-panel {
+  margin-bottom: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.debug-panel h2 {
+  margin: 0 0 8px;
+  color: #f8fafc;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.debug-panel pre {
+  max-height: 360px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.45 Consolas, "Courier New", monospace;
+}
+
 .results {
   display: grid;
   gap: 10px;

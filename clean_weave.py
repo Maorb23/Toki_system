@@ -1,7 +1,7 @@
 import weave
 
 PROJECT = "maorblumberg-tel-aviv-university/communication-agent"
-BATCH_SIZE = 100
+BATCH_SIZE = 100 # The amount of calls to delete in each batch. Adjust based on your needs and Weave rate limits.
 
 TARGET_ROOT_OP = "communication_agent.inline_preview"
 

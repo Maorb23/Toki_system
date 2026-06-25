@@ -70,9 +70,16 @@
       <button id="previewButton" type="button" class="secondary">Preview Inline Suggestions</button>
       <button id="analyzeButton" type="button" class="primary">Analyze Draft</button>
       <button id="applyButton" type="button" class="secondary" disabled>Apply Improved Version</button>
+      <button id="debugToggleButton" type="button" class="secondary" aria-expanded="false">Show Debug</button>
+      <button id="debugRefreshButton" type="button" class="secondary" hidden>Refresh Debug</button>
+      <button id="debugClearButton" type="button" class="secondary" hidden>Clear Debug</button>
     </section>
 
     <div id="statusText" class="status" role="status">Open this task pane from an Outlook compose draft.</div>
+    <section id="debugPanel" class="debug-panel" aria-label="Debug output" hidden>
+      <h2>Debug output</h2>
+      <pre id="debugOutput">Debug is enabled. Click Refresh Debug after reproducing an issue.</pre>
+    </section>
     <section id="resultRegion" class="results" aria-live="polite"></section>
   </main>
 

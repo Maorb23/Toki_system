@@ -13,9 +13,15 @@ from comms.services.event_log import log_event
 
 
 TYPO_NORMALIZATIONS = {
+    "abiut": "about",
+    "abouut": "about",
     "projerc": "project",
+    "prokject": "project",
+    "peoject": "project",
+    "projct": "project",
     "projec": "project",
     "projet": "project",
+    "wetalked": "we talked",
     "road map": "roadmap",
 }
 

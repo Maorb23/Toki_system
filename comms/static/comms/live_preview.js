@@ -150,7 +150,7 @@
           "X-CSRFToken": csrfInput?.value || "",
         },
         signal: controller.signal,
-        body: JSON.stringify(buildPreviewPayload(fullDraft, changedText, changed)),
+        body: JSON.stringify(buildPreviewPayload(fullDraft, changedText, changed, reviewWindow)),
       });
 
       if (!response.ok) {
@@ -177,8 +177,11 @@
     return form.dataset.senderId || senderSelect?.value || "";
   }
 
-  function buildPreviewPayload(fullDraft, changedText, changedRangeInfo) {
+  function buildPreviewPayload(fullDraft, changedText, changedRangeInfo, reviewWindow) {
     const payload = {
+      review_id: reviewWindow?.id ?? null,
+      review_text: reviewWindow?.text || changedText,
+      review_text_hash: reviewWindow?.textHash || "",
       channel: channelSelect?.value || form.dataset.channel || "gmail",
       intent: intentSelect.value,
       full_draft: fullDraft,

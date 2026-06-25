@@ -19,6 +19,43 @@ from comms.services.weave_monitor import (
 )
 
 
+INLINE_TRACE_ROOT = "inline_preview"
+INLINE_TRACE_SUGGESTION = "inline/suggestion"
+INLINE_TRACE_SUMMARY = "inline/summary"
+
+INLINE_NODE_TRACE_NAMES = {
+    "input_normalizer": "inline/input",
+    "router": "inline/router",
+    "context_tools": "inline/tools",
+    "prompt_builder": "inline/prompt",
+    "llm_preview": "inline/llm",
+    "final_validator": "inline/postprocess/validate",
+    "deterministic_inline_coach": "inline/postprocess/local_rules",
+    "context_inline_coach": "inline/postprocess/context_rules",
+    "final_response": "inline/final",
+}
+
+INLINE_TOOL_TRACE_NAMES = {
+    "suggest_related_projects": "inline/tools/projects",
+    "suggest_meeting_context": "inline/tools/meeting",
+    "get_receiver_profile": "inline/tools/receiver",
+    "get_company_context": "inline/tools/company",
+    "retrieve_company_patterns": "inline/tools/patterns",
+    "update_receiver_preference": "inline/tools/preference",
+    "save_company_pattern": "inline/tools/save_pattern",
+}
+
+INLINE_TOOL_JOBS = {
+    "suggest_related_projects": ("project_context_lookup", "project_or_entity_context_signal"),
+    "suggest_meeting_context": ("meeting_context_lookup", "meeting_or_schedule_signal"),
+    "get_receiver_profile": ("receiver_profile_lookup", "receiver_or_recipient_signal"),
+    "get_company_context": ("company_context_lookup", "company_or_values_signal"),
+    "retrieve_company_patterns": ("company_patterns_lookup", "company_or_values_signal"),
+    "update_receiver_preference": ("receiver_preference_update", "explicit_preference_write_intent"),
+    "save_company_pattern": ("company_pattern_write", "explicit_company_pattern_write_intent"),
+}
+
+
 INLINE_PREVIEW_WRITE_INTENT_PATTERN = re.compile(
     r"\b(remember|save|store|update|learn|note)\b.*\b(prefers?|preference|pattern|likes?|wants?)\b",
     re.IGNORECASE,
@@ -49,14 +86,96 @@ INLINE_PREVIEW_ENTITY_CONTEXT_ASK_PATTERN = re.compile(
 )
 
 TYPO_NORMALIZATIONS = {
+    "abiut": "about",
+    "abouut": "about",
     "projerc": "project",
     "prokject": "project",
+    "peoject": "project",
+    "projct": "project",
     "projec": "project",
     "projet": "project",
+    "wetalked": "we talked",
     "road map": "roadmap",
 }
 
+INLINE_TYPO_REPLACEMENTS = {
+    "abiut": "about",
+    "abouut": "about",
+    "beautoiful": "beautiful",
+    "gorgoeus": "gorgeous",
+    "goregoes": "gorgeous",
+    "gorgues": "gorgeous",
+    "peoject": "project",
+    "projct": "project",
+    "projec": "project",
+    "projerc": "project",
+    "projet": "project",
+    "prokject": "project",
+    "reciever": "receiver",
+    "recievers": "receivers",
+    "talkeda": "talked about",
+    "woker": "worker",
+    "wsnt": "want",
+}
+
+PROJECT_REFERENCE_PATTERN = re.compile(
+    r"\b(?:(?:our|the|this)\s+)?(?:project|prokject|projerc|peoject|projct|projec|projet)\b",
+    re.IGNORECASE,
+)
+
+APPEARANCE_WORD_PATTERN = r"(?:beautiful|beautoiful|gorgeous|gorgoeus|goregoes|gorgues|hot|sexy)"
+
 DETERMINISTIC_INLINE_PATTERNS = [
+    {
+        "pattern": re.compile(
+            rf"(?:^|(?<=[.!?\n]))\s*[^.!?\n]*(?:\b(?:your|ur)?\s*(?:wife|husband|partner|spouse)\b[^.!?\n]*(?:{APPEARANCE_WORD_PATTERN}|\bhook\s+up\b)|\bwhen\s+can\s+i\s+see\s+(?:your|ur)\s+{APPEARANCE_WORD_PATTERN}\s+(?:wife|husband|partner|spouse)\s+again\??|\b(?:your|ur)\s+{APPEARANCE_WORD_PATTERN}\s+(?:wife|husband|partner|spouse)\b)[^.!?\n]*[.!?]?",
+            re.IGNORECASE,
+        ),
+        "replacement": "When are you available to discuss the next steps?",
+        "issue": "Inappropriate personal comment",
+        "reason": "Removes a personal sexualized comment and keeps the message focused on a professional next step.",
+        "affected_scores": {"clarity": 6, "tone": 10, "receiver_fit": 9, "org_values_alignment": 8},
+    },
+    {
+        "pattern": re.compile(
+            rf"(?:^|(?<=[.!?\n]))\s*[^.!?\n]*(?:\b(?:you|u)\s+(?:are\s+)?{APPEARANCE_WORD_PATTERN}\b|\bmake\s+you\s+{APPEARANCE_WORD_PATTERN}\b|\btight\s+jeans\b|\bhook\s+up\b)[^.!?\n]*[.!?]?",
+            re.IGNORECASE,
+        ),
+        "replacement": "Could you share your thoughts on the next step for this work?",
+        "issue": "Inappropriate personal comment",
+        "reason": "Replaces an objectifying personal comment with a professional project-focused ask.",
+        "affected_scores": {"clarity": 6, "tone": 10, "receiver_fit": 9, "org_values_alignment": 8},
+    },
+    {
+        "pattern": re.compile(
+            r"(?:^|(?<=[.!?\n]))\s*[^.!?\n]*\b(?:you|u)\s+unctuous\b[^.!?\n]*[.!?]?",
+            re.IGNORECASE,
+        ),
+        "replacement": "Could you share what you need to move this forward?",
+        "issue": "Unprofessional wording",
+        "reason": "Removes an insulting or confusing personal phrase and turns it into a clear work-focused ask.",
+        "affected_scores": {"clarity": 7, "tone": 9, "receiver_fit": 8, "org_values_alignment": 7},
+    },
+    {
+        "pattern": re.compile(
+            r"(?:^|(?<=[.!?\n]))\s*[^.!?\n]*\b(?:send|show|share)\s+(?:you\s+)?(?:good\s+|nice\s+|hot\s+|sexy\s+)?(?:photos?|pictures?|pics?)\s+of\s+me\b[^.!?\n]*[.!?]?",
+            re.IGNORECASE,
+        ),
+        "replacement": "Could you review the relevant materials for this task?",
+        "issue": "Inappropriate personal content",
+        "reason": "Replaces an unrelated personal photo reference with a professional work-focused request.",
+        "affected_scores": {"clarity": 6, "tone": 10, "receiver_fit": 9, "org_values_alignment": 8},
+    },
+    {
+        "pattern": re.compile(
+            rf"(?:^|(?<=[.!?\n]))\s*[^.!?\n]*\b(?:find|meet|see|look\s+for)\s+(?:some\s+)?{APPEARANCE_WORD_PATTERN}\s+(?:women|woman|girls?|people)\b[^.!?\n]*[.!?]?",
+            re.IGNORECASE,
+        ),
+        "replacement": "Could you help identify the right stakeholders for this work?",
+        "issue": "Inappropriate workplace comment",
+        "reason": "Replaces a non-workplace objectifying comment with a professional stakeholder-focused request.",
+        "affected_scores": {"clarity": 6, "tone": 10, "receiver_fit": 9, "org_values_alignment": 8},
+    },
     {
         "pattern": re.compile(r"\b(?:let'?s\s+do\s+it\s+)?good\s+and\s+great\s+and\s+shiny!?", re.IGNORECASE),
         "replacement": "Let's make it polished, user-facing, and fully functional.",
@@ -101,12 +220,17 @@ def _new_preview_metadata() -> dict[str, Any]:
         "nodes_executed": [],
         "tools_called": [],
         "selected_tools": [],
+        "selected_jobs": [],
+        "tool_reasons": {},
         "route": None,
         "tool_results": {},
+        "project_candidates": [],
         "steps": [],
         "used_llm": False,
         "used_tools": False,
         "latency_ms_by_node": {},
+        "latency_ms_by_tool": {},
+        "latency_ms_by_job": {},
         "total_latency_ms": 0,
         "errors": [],
         "weave_tracing": weave_enabled(),
@@ -129,6 +253,7 @@ def _record_preview_step(
     metadata.setdefault("steps", []).append({
         "name": node_name,
         "type": "node",
+        "trace_name": INLINE_NODE_TRACE_NAMES.get(node_name, f"inline/{node_name}"),
         "status": status,
     })
     if error:
@@ -146,10 +271,13 @@ def _trace_preview_node(
     start = time.perf_counter()
     try:
         result = trace_operation(
-            f"communication_agent.inline_preview.node.{node_name}",
+            INLINE_NODE_TRACE_NAMES.get(node_name, f"inline/{node_name}"),
             {
                 "node": node_name,
+                "trace_group": _trace_group_for_node(node_name),
                 "selected_tools": metadata.get("selected_tools", []),
+                "selected_jobs": metadata.get("selected_jobs", []),
+                "tool_reasons": metadata.get("tool_reasons", {}),
                 "used_tools": metadata.get("used_tools", False),
                 **inputs,
             },
@@ -168,23 +296,38 @@ def _preview_trace_output(result: dict, metadata: dict[str, Any]) -> dict[str, A
         "text_hash": result.get("text_hash"),
         "route": metadata.get("route"),
         "suggestion_count": len(result.get("suggestions") or []),
+        "selected_jobs": metadata.get("selected_jobs", []),
         "selected_tools": metadata.get("selected_tools", []),
+        "tool_reasons": metadata.get("tool_reasons", {}),
+        "project_candidates": metadata.get("project_candidates", []),
         "nodes_executed": metadata.get("nodes_executed", []),
         "tools_called": metadata.get("tools_called", []),
         "steps": metadata.get("steps", []),
         "used_llm": metadata.get("used_llm", False),
         "used_tools": metadata.get("used_tools", False),
         "latency_ms_by_node": metadata.get("latency_ms_by_node", {}),
+        "latency_ms_by_tool": metadata.get("latency_ms_by_tool", {}),
+        "latency_ms_by_job": metadata.get("latency_ms_by_job", {}),
         "total_latency_ms": metadata.get("total_latency_ms"),
         "error_count": len(metadata.get("errors") or []),
     }
+
+
+def _trace_group_for_node(node_name: str) -> str:
+    if node_name in {"final_validator", "deterministic_inline_coach", "context_inline_coach"}:
+        return "postprocess"
+    if node_name == "context_tools":
+        return "tools"
+    if node_name == "llm_preview":
+        return "llm"
+    return node_name.replace("_", "-")
 
 
 def _select_preview_tools(
     changed_text: str,
     surrounding_context: str,
     prior_review_context: list[dict] | None = None,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], list[str], dict[str, str]]:
     raw_text = " ".join([
         changed_text or "",
         surrounding_context or "",
@@ -192,29 +335,52 @@ def _select_preview_tools(
     ])
     text = _normalize_routing_text(raw_text)
     if not text.strip():
-        return "bypass", []
+        return "bypass", [], [], {}
 
     selected_tools: list[str] = []
+    selected_jobs: list[str] = []
+    tool_reasons: dict[str, str] = {}
+    if _has_local_edit_signal(raw_text, text):
+        selected_jobs.append("local_edit")
+
     if INLINE_PREVIEW_PROJECT_LOOKUP_PATTERN.search(text):
         selected_tools.append("suggest_related_projects")
+        selected_jobs.append("project_context_lookup")
+        tool_reasons["suggest_related_projects"] = "project_keyword_or_context_typo"
 
     if _has_entity_context_ask(raw_text):
         selected_tools.append("suggest_related_projects")
+        selected_jobs.append("project_context_lookup")
+        tool_reasons["suggest_related_projects"] = "entity_name_context_ask"
 
     if INLINE_PREVIEW_MEETING_LOOKUP_PATTERN.search(text):
         selected_tools.append("suggest_meeting_context")
+        selected_jobs.append("meeting_context_lookup")
+        tool_reasons["suggest_meeting_context"] = "meeting_or_schedule_signal"
 
     if INLINE_PREVIEW_WRITE_INTENT_PATTERN.search(text):
         selected_tools.append("update_receiver_preference")
+        selected_jobs.append("receiver_preference_update")
+        tool_reasons["update_receiver_preference"] = "explicit_preference_write_intent"
 
     if INLINE_PREVIEW_COMPANY_LOOKUP_PATTERN.search(text):
         selected_tools.extend(["get_company_context", "retrieve_company_patterns"])
+        selected_jobs.append("company_context_lookup")
+        tool_reasons["get_company_context"] = "company_or_values_signal"
+        tool_reasons["retrieve_company_patterns"] = "company_or_values_signal"
 
     if INLINE_PREVIEW_RECEIVER_LOOKUP_PATTERN.search(text) or re.search(r"\bwith\s+[a-z][a-z]+\b", text):
         selected_tools.append("get_receiver_profile")
+        selected_jobs.append("receiver_profile_lookup")
+        tool_reasons["get_receiver_profile"] = "receiver_or_recipient_signal"
 
     selected_tools = _dedupe(selected_tools)
-    return ("preview_with_context" if selected_tools else "preview", selected_tools)
+    selected_jobs = _dedupe(selected_jobs)
+    return ("preview_with_context" if selected_tools else "preview", selected_tools, selected_jobs, tool_reasons)
+
+
+def _has_local_edit_signal(raw_text: str, normalized_text: str) -> bool:
+    return (raw_text or "").lower() != (normalized_text or "").lower()
 
 
 def _has_entity_context_ask(raw_text: str) -> bool:
@@ -355,6 +521,7 @@ def _clean_inline_suggestion(item: dict, changed_text: str) -> dict | None:
         "issue": str(item.get("issue") or ""),
         "reason": str(item.get("reason") or ""),
         "affected_scores": _normalize_affected_scores(item.get("affected_scores")),
+        "source": str(item.get("source") or "llm"),
         "_start_index": target_start,
         "_end_index": target_start + len(target_text),
         "_correction_like": _is_correction_like(target_text, suggested_replacement),
@@ -363,6 +530,22 @@ def _clean_inline_suggestion(item: dict, changed_text: str) -> dict | None:
 
 def deterministic_inline_suggestions(changed_text: str) -> list[dict]:
     suggestions: list[dict] = []
+    for typo, replacement in INLINE_TYPO_REPLACEMENTS.items():
+        for match in re.finditer(rf"\b{re.escape(typo)}\b", changed_text or "", flags=re.IGNORECASE):
+            cleaned = _clean_inline_suggestion(
+                {
+                    "target_text": match.group(0),
+                    "suggested_replacement": _preserve_case(match.group(0), replacement),
+                    "issue": "Typo",
+                    "reason": "Corrects a spelling issue without rewriting the surrounding sentence.",
+                    "affected_scores": {"clarity": 4, "tone": 1, "receiver_fit": 2, "org_values_alignment": 1},
+                    "source": "local_typo_rules",
+                },
+                changed_text,
+            )
+            if cleaned:
+                suggestions.append(cleaned)
+
     for rule in DETERMINISTIC_INLINE_PATTERNS:
         for match in rule["pattern"].finditer(changed_text):
             target_text = match.group(0)
@@ -373,12 +556,21 @@ def deterministic_inline_suggestions(changed_text: str) -> list[dict]:
                     "issue": rule["issue"],
                     "reason": rule["reason"],
                     "affected_scores": rule["affected_scores"],
+                    "source": "local_rules",
                 },
                 changed_text,
             )
             if cleaned:
                 suggestions.append(cleaned)
     return suggestions
+
+
+def _preserve_case(original: str, replacement: str) -> str:
+    if original.isupper():
+        return replacement.upper()
+    if original[:1].isupper():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
 
 
 def deterministic_context_suggestions(changed_text: str, tool_results: dict[str, Any] | None) -> list[dict]:
@@ -391,7 +583,7 @@ def deterministic_context_suggestions(changed_text: str, tool_results: dict[str,
         return []
 
     suggestions: list[dict] = []
-    for match in re.finditer(r"\b(?:our|the|this)\s+project\b", changed_text or "", flags=re.IGNORECASE):
+    for match in PROJECT_REFERENCE_PATTERN.finditer(changed_text or ""):
         cleaned = _clean_inline_suggestion(
             {
                 "target_text": match.group(0),
@@ -399,6 +591,7 @@ def deterministic_context_suggestions(changed_text: str, tool_results: dict[str,
                 "issue": "Name the project",
                 "reason": "Uses retrieved project context so the receiver knows which project you mean.",
                 "affected_scores": {"clarity": 7, "receiver_fit": 5, "org_values_alignment": 3},
+                "source": "context_rules",
             },
             changed_text,
         )
@@ -415,6 +608,73 @@ def _best_related_project(tool_results: dict[str, Any] | None) -> dict[str, Any]
         if isinstance(project, dict) and project.get("type") == "project" and project.get("name"):
             return project
     return None
+
+
+def _project_candidate_names(tool_results: dict[str, Any] | None) -> list[str]:
+    projects = (tool_results or {}).get("suggest_related_projects") or []
+    if not isinstance(projects, list):
+        return []
+    names = []
+    for project in projects[:5]:
+        if isinstance(project, dict) and project.get("name"):
+            names.append(str(project["name"]))
+    return names
+
+
+def _trace_inline_suggestions(
+    *,
+    metadata: dict[str, Any],
+    review_id: Any,
+    review_text: str,
+    review_text_hash: str,
+    normalized_changed_text: str,
+    suggestions: list[dict],
+) -> None:
+    for index, suggestion in enumerate(suggestions):
+        target_text = str(suggestion.get("target_text") or "")
+        suggested_replacement = str(suggestion.get("suggested_replacement") or "")
+        source = str(suggestion.get("source") or "unknown")
+        trace_operation(
+            INLINE_TRACE_SUGGESTION,
+            {
+                "review_id": review_id,
+                "review_text_hash": review_text_hash or text_hash(review_text or normalized_changed_text),
+                "suggestion_index": index,
+                "suggestion_source": source,
+                "target_text_hash": text_hash(target_text),
+                "replacement_hash": text_hash(suggested_replacement),
+                "issue": suggestion.get("issue", ""),
+                "route": metadata.get("route"),
+                "selected_jobs": metadata.get("selected_jobs", []),
+                "selected_tools": metadata.get("selected_tools", []),
+                "tool_reasons": metadata.get("tool_reasons", {}),
+                "project_candidates": metadata.get("project_candidates", []),
+                **content_trace_fields(
+                    review_text=review_text or normalized_changed_text,
+                    target_text=target_text,
+                    suggested_replacement=suggested_replacement,
+                    reason=suggestion.get("reason", ""),
+                ),
+            },
+            lambda suggestion=suggestion: suggestion,
+            output=lambda value, index=index, source=source: {
+                "review_id": review_id,
+                "suggestion_index": index,
+                "suggestion_source": source,
+                "target_text_hash": text_hash(str(value.get("target_text") or "")),
+                "replacement_hash": text_hash(str(value.get("suggested_replacement") or "")),
+                "issue": value.get("issue", ""),
+                "selected_jobs": metadata.get("selected_jobs", []),
+                "selected_tools": metadata.get("selected_tools", []),
+                "tool_reasons": metadata.get("tool_reasons", {}),
+                "project_candidates": metadata.get("project_candidates", []),
+                **content_trace_fields(
+                    target_text=value.get("target_text", ""),
+                    suggested_replacement=value.get("suggested_replacement", ""),
+                    reason=value.get("reason", ""),
+                ),
+            },
+        )
 
 
 def validate_inline_preview_response(data: dict, changed_text: str) -> list[dict]:
@@ -453,12 +713,17 @@ class InlineSuggestionPreviewer:
         changed_text: str,
         surrounding_context: str,
         prior_review_context: list[dict] | None = None,
+        review_id: Any = None,
+        review_text: str = "",
+        review_text_hash: str = "",
     ) -> dict:
         if sender.organization_id != receiver.organization_id:
             raise ValueError("Sender and receiver must belong to the same organization")
 
         full_draft = full_draft or ""
         raw_changed_text = changed_text or ""
+        review_text = review_text or raw_changed_text
+        review_text_hash = review_text_hash or text_hash(review_text.strip())
         surrounding_context = surrounding_context or ""
         prior_review_context = _sanitize_prior_review_context(prior_review_context)
         metadata = _new_preview_metadata()
@@ -470,7 +735,9 @@ class InlineSuggestionPreviewer:
                 {
                     "changed_text_length": len(raw_changed_text),
                     "changed_text_hash": text_hash(raw_changed_text.strip()),
-                    **content_trace_fields(changed_text=raw_changed_text),
+                    "review_id": review_id,
+                    "review_text_hash": review_text_hash,
+                    **content_trace_fields(changed_text=raw_changed_text, review_text=review_text),
                 },
                 lambda: raw_changed_text.strip(),
                 output=lambda value: {
@@ -489,25 +756,37 @@ class InlineSuggestionPreviewer:
                     output=lambda result: _preview_trace_output(result, metadata),
                 )
 
-            route, selected_tools = _trace_preview_node(
+            route, selected_tools, selected_jobs, tool_reasons = _trace_preview_node(
                 metadata,
                 "router",
                 {
                     "changed_text_hash": text_hash(normalized_changed_text),
                     "changed_text_length": len(normalized_changed_text),
+                    "review_id": review_id,
+                    "review_text_hash": review_text_hash,
                     "surrounding_context_length": len(surrounding_context),
                     "prior_review_count": len(prior_review_context),
                     **content_trace_fields(
                         changed_text=normalized_changed_text,
+                        review_text=review_text,
                         surrounding_context=surrounding_context,
                         prior_review_context=prior_review_context,
                     ),
                 },
                 lambda: _select_preview_tools(normalized_changed_text, surrounding_context, prior_review_context),
-                output=lambda value: {"route": value[0], "selected_tools": value[1]},
+                output=lambda value: {
+                    "route": value[0],
+                    "selected_tools": value[1],
+                    "selected_jobs": value[2],
+                    "tool_reasons": value[3],
+                    "job_count": len(value[2]),
+                    "tool_count": len(value[1]),
+                },
             )
             metadata["route"] = route
             metadata["selected_tools"] = selected_tools
+            metadata["selected_jobs"] = selected_jobs
+            metadata["tool_reasons"] = tool_reasons
 
             tool_results = _trace_preview_node(
                 metadata,
@@ -515,6 +794,8 @@ class InlineSuggestionPreviewer:
                 {
                     "route": route,
                     "selected_tools": selected_tools,
+                    "selected_jobs": selected_jobs,
+                    "tool_reasons": tool_reasons,
                     "company_id": sender.organization_id,
                     "receiver": receiver.id,
                     "changed_text_hash": text_hash(normalized_changed_text),
@@ -530,13 +811,19 @@ class InlineSuggestionPreviewer:
                         _prior_review_text(prior_review_context),
                     ]),
                     selected_tools=selected_tools,
+                    metadata=metadata,
                 ),
                 output=lambda value: {
                     "tools_called": sorted(str(key) for key in value.keys()),
+                    "selected_jobs": metadata.get("selected_jobs", []),
+                    "tool_reasons": metadata.get("tool_reasons", {}),
+                    "latency_ms_by_tool": metadata.get("latency_ms_by_tool", {}),
+                    "latency_ms_by_job": metadata.get("latency_ms_by_job", {}),
                     "tool_count": len(value),
                 },
             )
             metadata["tool_results"] = tool_results
+            metadata["project_candidates"] = _project_candidate_names(tool_results)
             metadata["tools_called"] = selected_tools
             metadata["used_tools"] = bool(selected_tools)
 
@@ -665,28 +952,44 @@ class InlineSuggestionPreviewer:
                     **content_trace_fields(suggestions=value.get("suggestions", [])),
                 },
             )
+            _trace_inline_suggestions(
+                metadata=metadata,
+                review_id=review_id,
+                review_text=review_text,
+                review_text_hash=review_text_hash,
+                normalized_changed_text=normalized_changed_text,
+                suggestions=suggestions,
+            )
             preview_start = metadata.pop("_preview_start_time", None)
             if preview_start is not None:
                 metadata["total_latency_ms"] = round((time.perf_counter() - preview_start) * 1000, 2)
             trace_operation(
-                "communication_agent.inline_preview.execution_summary",
+                INLINE_TRACE_SUMMARY,
                 {
                     "text_hash": result.get("text_hash"),
+                    "review_id": review_id,
+                    "review_text_hash": review_text_hash,
                     "route": metadata.get("route"),
+                    "selected_jobs": metadata.get("selected_jobs", []),
                     "node_count": len(metadata.get("nodes_executed") or []),
                     "tool_count": len(metadata.get("tools_called") or []),
                     "used_llm": metadata.get("used_llm", False),
                     "used_tools": metadata.get("used_tools", False),
-                    **content_trace_fields(changed_text=normalized_changed_text),
+                    **content_trace_fields(changed_text=normalized_changed_text, review_text=review_text),
                 },
                 lambda: metadata,
                 output=lambda value: {
                     "nodes_executed": value.get("nodes_executed", []),
                     "route": value.get("route"),
+                    "selected_jobs": value.get("selected_jobs", []),
                     "selected_tools": value.get("selected_tools", []),
+                    "tool_reasons": value.get("tool_reasons", {}),
+                    "project_candidates": value.get("project_candidates", []),
                     "tools_called": value.get("tools_called", []),
                     "steps": value.get("steps", []),
                     "latency_ms_by_node": value.get("latency_ms_by_node", {}),
+                    "latency_ms_by_tool": value.get("latency_ms_by_tool", {}),
+                    "latency_ms_by_job": value.get("latency_ms_by_job", {}),
                     "total_latency_ms": value.get("total_latency_ms"),
                     "used_llm": value.get("used_llm", False),
                     "used_tools": value.get("used_tools", False),
@@ -697,7 +1000,7 @@ class InlineSuggestionPreviewer:
             return result
 
         return trace_operation(
-            "communication_agent.inline_preview",
+            INLINE_TRACE_ROOT,
             {
                 "company_id": sender.organization_id,
                 "sender": sender.name,
@@ -707,13 +1010,18 @@ class InlineSuggestionPreviewer:
                 "full_draft_length": len(full_draft),
                 "changed_text_hash": text_hash(raw_changed_text.strip()),
                 "changed_text_length": len(raw_changed_text.strip()),
+                "review_id": review_id,
+                "review_text_hash": review_text_hash,
                 "surrounding_context_length": len(surrounding_context),
                 "prior_review_count": len(prior_review_context),
                 "selected_tools": metadata.get("selected_tools", []),
+                "selected_jobs": metadata.get("selected_jobs", []),
+                "tool_reasons": metadata.get("tool_reasons", {}),
                 "used_tools": metadata.get("used_tools", False),
                 **content_trace_fields(
                     full_draft=full_draft,
                     changed_text=raw_changed_text.strip(),
+                    review_text=review_text,
                     surrounding_context=surrounding_context,
                     prior_review_context=prior_review_context,
                 ),
@@ -732,6 +1040,7 @@ class InlineSuggestionPreviewer:
         receiver: Employee,
         message: str,
         selected_tools: list[str],
+        metadata: dict[str, Any],
     ) -> dict[str, Any]:
         if not selected_tools:
             return {}
@@ -744,21 +1053,48 @@ class InlineSuggestionPreviewer:
         has_explicit_preference = INLINE_PREVIEW_WRITE_INTENT_PATTERN.search(message) is not None
         results: dict[str, Any] = {}
         for tool_name in selected_tools:
+            tool_job, default_reason = INLINE_TOOL_JOBS.get(tool_name, (tool_name, "selected_by_router"))
+            tool_alias = INLINE_TOOL_TRACE_NAMES.get(tool_name, f"inline/tools/{tool_name}")
+            tool_metrics: dict[str, Any] = {}
+
+            def run_tool(tool_name=tool_name, tool_job=tool_job):
+                started = time.perf_counter()
+                try:
+                    return tools.run(
+                        tool_name,
+                        message=message,
+                        preference=preference,
+                    )
+                finally:
+                    latency_ms = round((time.perf_counter() - started) * 1000, 2)
+                    tool_metrics["latency_ms"] = latency_ms
+                    metadata.setdefault("latency_ms_by_tool", {})[tool_name] = latency_ms
+                    job_latencies = metadata.setdefault("latency_ms_by_job", {})
+                    job_latencies[tool_job] = round(job_latencies.get(tool_job, 0) + latency_ms, 2)
+
             results[tool_name] = trace_operation(
-                f"communication_agent.inline_preview.tool.{tool_name}",
-                tool_trace_inputs(
-                    tool_name,
-                    company_id=sender.organization_id,
-                    receiver=receiver.id,
-                    message=message,
-                    has_preference=has_explicit_preference
-                    and tool_name in {"save_company_pattern", "update_receiver_preference"},
-                ),
-                lambda tool_name=tool_name: tools.run(
-                    tool_name,
-                    message=message,
-                    preference=preference,
-                ),
-                output=tool_trace_output,
+                tool_alias,
+                {
+                    **tool_trace_inputs(
+                        tool_name,
+                        company_id=sender.organization_id,
+                        receiver=receiver.id,
+                        message=message,
+                        has_preference=has_explicit_preference
+                        and tool_name in {"save_company_pattern", "update_receiver_preference"},
+                    ),
+                    "trace_group": "tools",
+                    "tool_alias": tool_alias,
+                    "tool_job": tool_job,
+                    "tool_reason": metadata.get("tool_reasons", {}).get(tool_name, default_reason),
+                },
+                run_tool,
+                output=lambda result, tool_name=tool_name, tool_job=tool_job, default_reason=default_reason, tool_metrics=tool_metrics: {
+                    **tool_trace_output(result),
+                    "tool": tool_name,
+                    "tool_job": tool_job,
+                    "tool_reason": metadata.get("tool_reasons", {}).get(tool_name, default_reason),
+                    "latency_ms": tool_metrics.get("latency_ms"),
+                },
             )
         return results

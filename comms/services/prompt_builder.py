@@ -167,6 +167,8 @@ def build_inline_preview_prompt(
             "Analyze only changed_text and surrounding_context.",
             "Use prior_review_context as continuity context. Do not retarget prior reviewed text unless changed_text depends on it.",
             "Return suggestions only when there is a concrete improvement.",
+            "Prioritize inappropriate personal, sexual, or romantic comments in workplace messages; suggest removing or replacing them even if other clarity issues exist.",
+            "Treat objectifying comments about appearance, dating, clothing, or finding attractive people as inappropriate workplace content.",
             "Preserve the sender's intent.",
             "Avoid over-polishing. Keep the sender's voice natural.",
             "A comma-ended changed_text can be treated as a complete phrase when the sender paused there.",

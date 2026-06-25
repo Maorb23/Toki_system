@@ -1046,6 +1046,9 @@ class ApiTests(TestCase):
             "full_draft": "Hey Dana, what is the deadline?",
             "changed_text": "what is the deadline?",
             "surrounding_context": "Hey Dana,",
+            "review_id": 7,
+            "review_text": "what is the deadline?",
+            "review_text_hash": "review-hash-7",
         }
 
         response = self.client.post(

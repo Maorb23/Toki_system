@@ -15,12 +15,18 @@
     lastImprovedVersion: "",
     previewSuggestions: [],
     dismissedSuggestionKeys: [],
+    dismissedSuggestionContext: [],
     livePreviewEnabled: false,
     livePreviewPollTimer: null,
     livePreviewDebounceTimer: null,
     livePreviewRequestInFlight: false,
+    pendingPreviewRefreshReason: null,
     lastObservedBody: "",
     lastPreviewedBody: "",
+    previewRequestId: 0,
+    bodyMutationVersion: 0,
+    debugEnabled: false,
+    debugEvents: [],
   };
 
   const fields = {};
@@ -61,6 +67,11 @@
       "previewButton",
       "analyzeButton",
       "applyButton",
+      "debugToggleButton",
+      "debugRefreshButton",
+      "debugClearButton",
+      "debugPanel",
+      "debugOutput",
       "statusText",
       "resultRegion",
     ].forEach((id) => {
@@ -74,6 +85,9 @@
     fields.previewButton.addEventListener("click", previewInlineSuggestions);
     fields.analyzeButton.addEventListener("click", analyzeDraft);
     fields.applyButton.addEventListener("click", applyImprovedVersion);
+    fields.debugToggleButton.addEventListener("click", toggleDebugPanel);
+    fields.debugRefreshButton.addEventListener("click", refreshDebugPanel);
+    fields.debugClearButton.addEventListener("click", clearDebugPanel);
     [
       "backendUrl",
       "integrationToken",
@@ -105,6 +119,8 @@
     fields.intent.value = settings.intent || "request";
     fields.livePreviewToggle.checked = Boolean(settings.livePreviewEnabled);
     state.livePreviewEnabled = fields.livePreviewToggle.checked;
+    state.debugEnabled = Boolean(settings.debugEnabled);
+    applyDebugVisibility();
   }
 
   function saveSettings() {
@@ -117,6 +133,7 @@
       receiverName: fields.receiverName.value.trim(),
       intent: fields.intent.value,
       livePreviewEnabled: fields.livePreviewToggle.checked,
+      debugEnabled: state.debugEnabled,
     }));
   }
 
@@ -246,7 +263,23 @@
     }
   }
 
-  async function runPreviewForCurrentDraft({ manual }) {
+  function scheduleLivePreviewRefresh(reason, delayMs = 250) {
+    if (!state.livePreviewEnabled) return;
+
+    if (state.livePreviewRequestInFlight) {
+      state.pendingPreviewRefreshReason = reason;
+      addDebugEvent("preview_refresh_pending", { reason });
+      return;
+    }
+
+    clearTimeout(state.livePreviewDebounceTimer);
+    state.livePreviewDebounceTimer = setTimeout(() => {
+      runPreviewForCurrentDraft({ manual: false, forceFullBody: true });
+    }, delayMs);
+    addDebugEvent("preview_scheduled", { reason });
+  }
+
+  async function runPreviewForCurrentDraft({ manual, forceFullBody = false }) {
     if (state.livePreviewRequestInFlight) return;
     state.livePreviewRequestInFlight = true;
 
@@ -261,27 +294,82 @@
 
       const payload = buildPayload(draft);
       payload.full_draft = draft.body;
-      payload.changed_text = changedText(state.lastPreviewedBody, draft.body);
-      payload.surrounding_context = draft.subject ? `Subject: ${draft.subject}` : "";
-      payload.prior_review_context = state.dismissedSuggestionKeys;
+      const changed = previewChangedText(forceFullBody ? "" : state.lastPreviewedBody, draft.body, manual || forceFullBody);
+      payload.changed_text = changed.text;
+      payload.surrounding_context = previewSurroundingContext(draft, changed);
+      payload.prior_review_context = state.dismissedSuggestionContext;
       delete payload.body;
       delete payload.subject;
 
       if (!payload.changed_text.trim()) return;
+      if (!manual && !isReviewablePreviewChange(draft.body, changed)) {
+        setStatus("Waiting for a complete phrase before checking...");
+        return;
+      }
 
       saveSettings();
       renderDraftMeta(draft);
       setStatus(manual ? "Checking inline suggestions..." : "Live preview checking suggestions...");
+      const requestId = ++state.previewRequestId;
+      const mutationVersion = state.bodyMutationVersion;
       const data = await postJson(ENDPOINTS.preview, payload);
-      state.previewSuggestions = normalizePreviewSuggestions(data.suggestions || []);
+      const currentDraft = await readDraft();
+      if (
+        requestId !== state.previewRequestId
+        || mutationVersion !== state.bodyMutationVersion
+      ) {
+        addDebugEvent("preview_discarded", {
+          manual,
+          request_id: requestId,
+          latest_request_id: state.previewRequestId,
+          request_body_length: draft.body.length,
+          current_body_length: currentDraft.body.length,
+          body_changed_during_request: currentDraft.body !== draft.body,
+          mutation_version_at_request: mutationVersion,
+          current_mutation_version: state.bodyMutationVersion,
+        });
+        return;
+      }
+
+      const incomingSuggestions = normalizePreviewSuggestions(data.suggestions || [], draft.body)
+        .map((suggestion) => {
+          const range = reanchorSuggestionRange(suggestion, currentDraft.body, suggestion.range);
+          return range ? { ...suggestion, range } : null;
+        })
+        .filter((suggestion) => suggestion);
+      state.previewSuggestions = mergePreviewSuggestions(state.previewSuggestions, incomingSuggestions, currentDraft.body);
+      addDebugEvent("preview_response", {
+        manual,
+        body_length: currentDraft.body.length,
+        request_body_length: draft.body.length,
+        body_changed_during_request: currentDraft.body !== draft.body,
+        changed_text: payload.changed_text,
+        changed_text_length: payload.changed_text.length,
+        changed_range: { start: changed.start, end: changed.end },
+        backend_text_hash: data.text_hash || "",
+        raw_suggestion_count: (data.suggestions || []).length,
+        incoming_suggestion_count: incomingSuggestions.length,
+        visible_suggestion_count: state.previewSuggestions.length,
+        incoming_suggestions: debugSuggestionRows(incomingSuggestions, currentDraft.body),
+        suggestions: debugSuggestionRows(state.previewSuggestions, currentDraft.body),
+      });
       state.lastPreviewedBody = draft.body;
       renderPreview(data, state.previewSuggestions);
       setStatus(state.previewSuggestions.length ? `${state.previewSuggestions.length} suggestion(s) ready.` : "No inline suggestions returned.");
     } catch (error) {
       if (manual) state.previewSuggestions = [];
+      addDebugEvent("preview_error", {
+        manual,
+        error: error.message,
+      });
       setStatus(error.message, true);
     } finally {
       state.livePreviewRequestInFlight = false;
+      const pendingPreviewRefreshReason = state.pendingPreviewRefreshReason;
+      state.pendingPreviewRefreshReason = null;
+      if (pendingPreviewRefreshReason) {
+        scheduleLivePreviewRefresh(pendingPreviewRefreshReason, 0);
+      }
     }
   }
 
@@ -322,22 +410,55 @@
 
     try {
       const draft = await readDraft();
-      const updatedBody = replaceFirstDraftMatch(
-        draft.body,
-        suggestion.target_text,
-        suggestion.suggested_replacement,
-      );
+      addDebugEvent("apply_attempt", {
+        suggestion_id: suggestion.id || suggestion.local_id,
+        local_id: suggestion.local_id,
+        body_length: draft.body.length,
+        target_text: suggestion.target_text,
+        range: suggestion.range || null,
+        range_slice: sliceRange(draft.body, suggestion.range),
+        range_matches_target: rangeMatchesTarget(draft.body, suggestion),
+        nearest_target_index: nearestTargetIndex(draft.body, suggestion.target_text),
+        visible_suggestions_before: debugSuggestionRows(state.previewSuggestions, draft.body),
+      });
+      const range = resolveSuggestionRange(suggestion, draft.body);
+      const updatedBody = replaceDraftRange(draft.body, range, suggestion.suggested_replacement);
       await setDraftBody(updatedBody);
-      state.lastObservedBody = updatedBody;
-      state.lastPreviewedBody = updatedBody;
-      state.previewSuggestions = state.previewSuggestions.filter((item) => item.local_id !== suggestionId);
+      state.bodyMutationVersion += 1;
+      state.previewRequestId += 1;
+      const postApplyDraft = await readDraft();
+      state.lastObservedBody = postApplyDraft.body;
+      state.lastPreviewedBody = postApplyDraft.body;
+      state.previewSuggestions = updateSuggestionsAfterApply(
+        state.previewSuggestions,
+        suggestion,
+        range,
+        suggestion.suggested_replacement,
+        postApplyDraft.body,
+      );
+      addDebugEvent("apply_success", {
+        suggestion_id: suggestion.id || suggestion.local_id,
+        local_id: suggestion.local_id,
+        applied_range: range,
+        replacement_length: String(suggestion.suggested_replacement || "").length,
+        updated_body_length: updatedBody.length,
+        post_apply_body_length: postApplyDraft.body.length,
+        post_apply_body_preview: previewText(postApplyDraft.body, 700),
+        visible_suggestions_after: debugSuggestionRows(state.previewSuggestions, postApplyDraft.body),
+      });
       renderPreview({ suggestions: state.previewSuggestions }, state.previewSuggestions);
+      scheduleLivePreviewRefresh("post_apply");
       setStatus("Suggestion applied to the draft body. Outlook has not sent the email.");
       logOutlookEvent("outlook_suggestion_applied", {
         suggestion_id: suggestion.id || suggestion.local_id,
         target_text: suggestion.target_text,
       });
     } catch (error) {
+      addDebugEvent("apply_error", {
+        local_id: suggestion.local_id,
+        target_text: suggestion.target_text,
+        error: error.message,
+      });
       setStatus(error.message, true);
     }
   }
@@ -347,8 +468,28 @@
     if (!suggestion) return;
 
     state.dismissedSuggestionKeys.push(suggestionKey(suggestion));
+    state.dismissedSuggestionContext.push({
+      id: suggestion.local_id,
+      status: "dismissed",
+      text: suggestion.target_text,
+      text_hash: suggestionKey(suggestion),
+      suggestions: [{
+        target_text: suggestion.target_text,
+        suggested_replacement: suggestion.suggested_replacement,
+        issue: suggestion.issue || "",
+        reason: suggestion.reason || "",
+      }],
+    });
+    state.dismissedSuggestionContext = state.dismissedSuggestionContext.slice(-10);
+    addDebugEvent("dismiss", {
+      suggestion_id: suggestion.id || suggestion.local_id,
+      local_id: suggestion.local_id,
+      target_text: suggestion.target_text,
+      range: suggestion.range || null,
+    });
     state.previewSuggestions = state.previewSuggestions.filter((item) => item.local_id !== suggestionId);
     renderPreview({ suggestions: state.previewSuggestions }, state.previewSuggestions);
+    scheduleLivePreviewRefresh("post_dismiss");
     setStatus("Suggestion dismissed.");
     logOutlookEvent("outlook_suggestion_rejected", {
       suggestion_id: suggestion.id || suggestion.local_id,
@@ -648,6 +789,119 @@
     fields.statusText.classList.toggle("error", Boolean(isError));
   }
 
+  function toggleDebugPanel() {
+    state.debugEnabled = !state.debugEnabled;
+    saveSettings();
+    applyDebugVisibility();
+    if (state.debugEnabled) {
+      refreshDebugPanel();
+    }
+  }
+
+  function applyDebugVisibility() {
+    fields.debugPanel.hidden = !state.debugEnabled;
+    fields.debugRefreshButton.hidden = !state.debugEnabled;
+    fields.debugClearButton.hidden = !state.debugEnabled;
+    fields.debugToggleButton.textContent = state.debugEnabled ? "Hide Debug" : "Show Debug";
+    fields.debugToggleButton.setAttribute("aria-expanded", state.debugEnabled ? "true" : "false");
+  }
+
+  async function refreshDebugPanel() {
+    if (!state.debugEnabled) return;
+
+    let snapshot = {};
+    try {
+      const draft = await readDraft();
+      snapshot = {
+        current_body_length: draft.body.length,
+        current_body_preview: previewText(draft.body, 700),
+        last_observed_body_length: state.lastObservedBody.length,
+        last_previewed_body_length: state.lastPreviewedBody.length,
+        visible_suggestions: debugSuggestionRows(state.previewSuggestions, draft.body),
+      };
+    } catch (error) {
+      snapshot = { error: error.message };
+    }
+
+    fields.debugOutput.textContent = JSON.stringify({
+      snapshot,
+      events: state.debugEvents.slice(-20),
+    }, null, 2);
+  }
+
+  function clearDebugPanel() {
+    state.debugEvents = [];
+    refreshDebugPanel();
+  }
+
+  function addDebugEvent(type, details) {
+    if (!state.debugEnabled) return;
+    state.debugEvents.push({
+      at: new Date().toISOString(),
+      type,
+      ...safeDebugValue(details || {}),
+    });
+    state.debugEvents = state.debugEvents.slice(-50);
+    refreshDebugPanel().catch(() => {});
+  }
+
+  function safeDebugValue(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function debugSuggestionRows(suggestions, body) {
+    const draft = String(body || "");
+    return (suggestions || []).map((suggestion, index) => ({
+      index,
+      local_id: suggestion.local_id || "",
+      backend_id: suggestion.id || null,
+      issue: suggestion.issue || "",
+      target_text: suggestion.target_text || "",
+      replacement: suggestion.suggested_replacement || "",
+      range: suggestion.range || null,
+      range_slice: sliceRange(draft, suggestion.range),
+      range_matches_target: rangeMatchesTarget(draft, suggestion),
+      nearest_target_index: nearestTargetIndex(draft, suggestion.target_text),
+      target_occurrence_count: targetOccurrenceCount(draft, suggestion.target_text),
+    }));
+  }
+
+  function rangeMatchesTarget(body, suggestion) {
+    return Boolean(
+      suggestion
+      && suggestion.range
+      && String(body || "").slice(suggestion.range.start, suggestion.range.end) === String(suggestion.target_text || "")
+    );
+  }
+
+  function sliceRange(body, range) {
+    if (!range) return "";
+    return String(body || "").slice(range.start, range.end);
+  }
+
+  function nearestTargetIndex(body, targetText) {
+    const range = findNearestTargetRange(body, targetText, 0);
+    return range ? range.start : -1;
+  }
+
+  function targetOccurrenceCount(body, targetText) {
+    const draft = String(body || "");
+    const target = String(targetText || "");
+    if (!target) return 0;
+    let count = 0;
+    let index = draft.indexOf(target);
+    while (index >= 0) {
+      count += 1;
+      index = draft.indexOf(target, index + target.length);
+    }
+    return count;
+  }
+
+  function previewText(text, maxLength) {
+    const value = String(text || "");
+    return value.length <= maxLength ? value : `${value.slice(0, maxLength)}...`;
+  }
+
   function bodyTextForApply(text) {
     const match = String(text || "").match(/^Subject:\s*[^\r\n]*(?:\r?\n){2,}([\s\S]*)$/i);
     return (match ? match[1] : text).trim();
@@ -660,23 +914,254 @@
     return current.slice(previous.length).trim() || current.trim();
   }
 
-  function normalizePreviewSuggestions(suggestions) {
+  function previewChangedText(previousBody, currentBody, manual) {
+    const current = String(currentBody || "");
+    if (manual || !previousBody) {
+      const start = firstNonWhitespaceIndex(current);
+      const end = current.trimEnd().length;
+      return {
+        text: current.slice(start, end).trim(),
+        start,
+        end,
+      };
+    }
+
+    const diff = changedRange(String(previousBody || ""), current);
+    if (diff.start === diff.end) return { text: "", start: diff.start, end: diff.end };
+
+    let start = diff.start;
+    let end = diff.end;
+
+    while (start > 0 && !isPreviewBoundary(current[start - 1])) {
+      start -= 1;
+    }
+    while (end < current.length && !isPreviewBoundary(current[end])) {
+      end += 1;
+    }
+    if (end < current.length && /[.!?]/.test(current[end])) {
+      end += 1;
+    }
+
+    const raw = current.slice(start, end);
+    const leadingWhitespace = raw.search(/\S/);
+    const normalizedStart = leadingWhitespace < 0 ? start : start + leadingWhitespace;
+    const normalizedEnd = start + raw.trimEnd().length;
+    return {
+      text: current.slice(normalizedStart, normalizedEnd).trim(),
+      start: normalizedStart,
+      end: normalizedEnd,
+    };
+  }
+
+  function changedRange(previous, next) {
+    let start = 0;
+    while (start < previous.length && start < next.length && previous[start] === next[start]) {
+      start += 1;
+    }
+
+    let previousEnd = previous.length;
+    let nextEnd = next.length;
+    while (previousEnd > start && nextEnd > start && previous[previousEnd - 1] === next[nextEnd - 1]) {
+      previousEnd -= 1;
+      nextEnd -= 1;
+    }
+
+    return { start, end: nextEnd };
+  }
+
+  function firstNonWhitespaceIndex(text) {
+    const index = String(text || "").search(/\S/);
+    return index < 0 ? 0 : index;
+  }
+
+  function isPreviewBoundary(char) {
+    return /[.!?\n\r]/.test(char);
+  }
+
+  function isReviewablePreviewChange(fullDraft, changed) {
+    const text = String(changed?.text || "").trim();
+    if (text.length < MIN_PREVIEW_BODY_LENGTH) return false;
+    if (endsInsideShortWord(fullDraft, changed)) return false;
+    return true;
+  }
+
+  function endsInsideShortWord(fullDraft, changed) {
+    const draft = String(fullDraft || "");
+    const draftEnd = draft.trimEnd().length;
+    if ((changed?.end ?? 0) !== draftEnd) return false;
+    const reviewedText = draft.slice(changed.start, changed.end).trimEnd();
+    return /[A-Za-z]{1,2}$/.test(reviewedText);
+  }
+
+  function previewSurroundingContext(draft, changed) {
+    const subject = draft.subject ? `Subject: ${draft.subject}\n\n` : "";
+    const body = String(draft.body || "");
+    const start = Math.max(0, (changed?.start ?? body.length) - 240);
+    const end = Math.min(body.length, (changed?.end ?? body.length) + 240);
+    return `${subject}${body.slice(start, end)}`;
+  }
+
+  function normalizePreviewSuggestions(suggestions, body) {
+    const draft = String(body || "");
     return suggestions
       .filter((suggestion) => suggestion && suggestion.target_text && suggestion.suggested_replacement)
       .map((suggestion, index) => ({
         ...suggestion,
         local_id: `suggestion-${Date.now()}-${index}`,
-      }));
+        range: resolveInitialSuggestionRange(suggestion, draft),
+      }))
+      .filter((suggestion) => suggestion.range && !state.dismissedSuggestionKeys.includes(suggestionKey(suggestion)));
   }
 
-  function replaceFirstDraftMatch(body, targetText, replacementText) {
-    const target = String(targetText || "");
+  function resolveInitialSuggestionRange(suggestion, body) {
+    const target = String(suggestion.target_text || "");
+    if (!target) return null;
+    return findNearestTargetRange(body, target, 0);
+  }
+
+  function resolveSuggestionRange(suggestion, body) {
+    const draft = String(body || "");
+    const range = suggestion.range;
+    if (range && draft.slice(range.start, range.end) === suggestion.target_text) {
+      return range;
+    }
+
+    const target = String(suggestion.target_text || "");
     if (!target) throw new Error("Suggestion target is missing.");
-    const index = String(body || "").indexOf(target);
-    if (index === -1) {
+    const resolved = findNearestTargetRange(draft, target, range?.start ?? 0);
+    if (!resolved) {
       throw new Error("Suggestion target no longer matches the draft. Refresh suggestions and try again.");
     }
-    return `${body.slice(0, index)}${replacementText}${body.slice(index + target.length)}`;
+    return resolved;
+  }
+
+  function replaceDraftRange(body, range, replacementText) {
+    if (!range) throw new Error("Suggestion target no longer matches the draft. Refresh suggestions and try again.");
+    return `${body.slice(0, range.start)}${replacementText}${body.slice(range.end)}`;
+  }
+
+  function updateSuggestionsAfterApply(suggestions, acceptedSuggestion, acceptedRange, replacementText, currentBody) {
+    const delta = String(replacementText || "").length - (acceptedRange.end - acceptedRange.start);
+    return suggestions
+      .filter((suggestion) => suggestion.local_id !== acceptedSuggestion.local_id)
+      .filter((suggestion) => suggestion.range && !rangesOverlap(suggestion.range, acceptedRange))
+      .map((suggestion) => {
+        let nextRange = suggestion.range;
+        if (suggestion.range.start >= acceptedRange.end) {
+          nextRange = {
+            start: suggestion.range.start + delta,
+            end: suggestion.range.end + delta,
+          };
+        }
+        const anchoredRange = reanchorSuggestionRange(suggestion, currentBody, nextRange);
+        if (!anchoredRange) return null;
+        return {
+          ...suggestion,
+          range: anchoredRange,
+        };
+      })
+      .filter((suggestion) => suggestion);
+  }
+
+  function mergePreviewSuggestions(existingSuggestions, incomingSuggestions, currentBody) {
+    const merged = [];
+    const seen = new Set();
+    const body = String(currentBody || "");
+
+    [...existingSuggestions, ...incomingSuggestions].forEach((suggestion) => {
+      const range = reanchorSuggestionRange(suggestion, body, suggestion.range);
+      if (!range) return;
+
+      const nextSuggestion = { ...suggestion, range };
+      const key = suggestionMergeKey(nextSuggestion);
+      if (seen.has(key)) return;
+
+      seen.add(key);
+      merged.push(nextSuggestion);
+    });
+
+    return merged.sort((a, b) => (
+      (a.range?.start ?? 0) - (b.range?.start ?? 0)
+      || String(a.local_id || "").localeCompare(String(b.local_id || ""))
+    ));
+  }
+
+  function suggestionMergeKey(suggestion) {
+    const range = suggestion.range || {};
+    return [
+      suggestionKey(suggestion),
+      range.start ?? "",
+      range.end ?? "",
+    ].join("\u0001");
+  }
+
+  function rangesOverlap(a, b) {
+    return a.start < b.end && b.start < a.end;
+  }
+
+  function reanchorSuggestionRange(suggestion, body, preferredRange) {
+    const draft = String(body || "");
+    if (
+      preferredRange
+      && draft.slice(preferredRange.start, preferredRange.end) === String(suggestion.target_text || "")
+    ) {
+      return preferredRange;
+    }
+    return findNearestTargetRange(draft, suggestion.target_text, preferredRange?.start ?? 0);
+  }
+
+  function findNearestTargetRange(body, targetText, preferredStart) {
+    const draft = String(body || "");
+    const target = String(targetText || "");
+    if (!target) return null;
+
+    const exact = findNearestMatch(draft, target, preferredStart, false);
+    if (exact) return exact;
+
+    const insensitive = findNearestMatch(draft, target, preferredStart, true);
+    if (insensitive) return insensitive;
+
+    return findNearestFlexibleWhitespaceRange(draft, target, preferredStart);
+  }
+
+  function findNearestMatch(body, targetText, preferredStart, ignoreCase) {
+    const haystack = ignoreCase ? body.toLowerCase() : body;
+    const needle = ignoreCase ? targetText.toLowerCase() : targetText;
+    let best = null;
+    let bestDistance = Number.MAX_SAFE_INTEGER;
+    let index = haystack.indexOf(needle);
+    while (index >= 0) {
+      const distance = Math.abs(index - preferredStart);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { start: index, end: index + targetText.length };
+      }
+      index = haystack.indexOf(needle, index + 1);
+    }
+    return best;
+  }
+
+  function findNearestFlexibleWhitespaceRange(body, targetText, preferredStart) {
+    const tokens = String(targetText || "").trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) return null;
+
+    const matcher = new RegExp(tokens.map(escapeRegExp).join("\\s+"), "gi");
+    let best = null;
+    let bestDistance = Number.MAX_SAFE_INTEGER;
+    let match = matcher.exec(body);
+    while (match) {
+      const distance = Math.abs(match.index - preferredStart);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { start: match.index, end: match.index + match[0].length };
+      }
+      match = matcher.exec(body);
+    }
+    return best;
+  }
+
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   function suggestionKey(suggestion) {

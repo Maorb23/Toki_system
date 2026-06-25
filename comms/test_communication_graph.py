@@ -543,24 +543,27 @@ class InlinePreviewWeaveTests(TestCase):
                 )
 
         names = [call["name"] for call in trace_calls]
-        self.assertIn("communication_agent.inline_preview", names)
-        self.assertIn("communication_agent.inline_preview.node.input_normalizer", names)
-        self.assertIn("communication_agent.inline_preview.node.router", names)
-        self.assertIn("communication_agent.inline_preview.node.context_tools", names)
-        self.assertIn("communication_agent.inline_preview.node.prompt_builder", names)
-        self.assertIn("communication_agent.inline_preview.node.llm_preview", names)
-        self.assertIn("communication_agent.inline_preview.node.final_validator", names)
-        self.assertIn("communication_agent.inline_preview.node.final_response", names)
-        self.assertIn("communication_agent.inline_preview.execution_summary", names)
-        self.assertIn("communication_agent.inline_preview.tool.suggest_meeting_context", names)
-        self.assertNotIn("communication_agent.inline_preview.tool.get_company_context", names)
-        self.assertNotIn("communication_agent.inline_preview.tool.retrieve_company_patterns", names)
+        self.assertIn("inline_preview", names)
+        self.assertIn("inline/input", names)
+        self.assertIn("inline/router", names)
+        self.assertIn("inline/tools", names)
+        self.assertIn("inline/prompt", names)
+        self.assertIn("inline/llm", names)
+        self.assertIn("inline/postprocess/validate", names)
+        self.assertIn("inline/final", names)
+        self.assertIn("inline/summary", names)
+        self.assertIn("inline/tools/meeting", names)
+        self.assertNotIn("inline/tools/company", names)
+        self.assertNotIn("inline/tools/patterns", names)
 
-        outer_call = next(call for call in trace_calls if call["name"] == "communication_agent.inline_preview")
-        final_call = next(call for call in trace_calls if call["name"] == "communication_agent.inline_preview.node.final_response")
+        outer_call = next(call for call in trace_calls if call["name"] == "inline_preview")
+        final_call = next(call for call in trace_calls if call["name"] == "inline/final")
         self.assertIn("suggest_meeting_context", outer_call["output"]["tools_called"])
+        self.assertIn("meeting_context_lookup", outer_call["output"]["selected_jobs"])
         self.assertTrue(outer_call["output"]["used_tools"])
         self.assertIn("llm_preview", outer_call["output"]["nodes_executed"])
+        self.assertIn("latency_ms_by_tool", outer_call["output"])
+        self.assertIn("latency_ms_by_job", outer_call["output"])
         self.assertIn("steps", outer_call["output"])
         self.assertNotIn("content", outer_call["inputs"])
         self.assertNotIn("content", outer_call["output"])
@@ -592,11 +595,14 @@ class InlinePreviewWeaveTests(TestCase):
                 surrounding_context="",
             )
 
-        outer_call = next(call for call in trace_calls if call["name"] == "communication_agent.inline_preview")
+        outer_call = next(call for call in trace_calls if call["name"] == "inline_preview")
         tools_called = outer_call["output"]["tools_called"]
         self.assertIn("suggest_related_projects", tools_called)
         self.assertIn("suggest_meeting_context", tools_called)
         self.assertIn("get_receiver_profile", tools_called)
+        self.assertIn("project_context_lookup", outer_call["output"]["selected_jobs"])
+        self.assertIn("meeting_context_lookup", outer_call["output"]["selected_jobs"])
+        self.assertIn("receiver_profile_lookup", outer_call["output"]["selected_jobs"])
         self.assertNotIn("get_company_context", tools_called)
         self.assertNotIn("retrieve_company_patterns", tools_called)
 
@@ -634,7 +640,7 @@ class InlinePreviewWeaveTests(TestCase):
                     changed_text=changed_text,
                     surrounding_context="",
                 )
-            outer_call = next(call for call in trace_calls if call["name"] == "communication_agent.inline_preview")
+            outer_call = next(call for call in trace_calls if call["name"] == "inline_preview")
             return outer_call["output"]["tools_called"]
 
         self.assertEqual(run_and_collect_tools("abboput"), [])
@@ -674,20 +680,36 @@ class InlinePreviewWeaveTests(TestCase):
                     receiver=self.receiver,
                     channel=Message.Channel.SLACK,
                     intent=Message.Intent.REQUEST,
-                    full_draft="Hey Dana, Regarding our project, how can we improve the onboarding reliability?",
-                    changed_text="Regarding our project, how can we improve the onboarding reliability?",
+                    full_draft="Hey Dana, Abiut the peoject we talked about,",
+                    changed_text="Abiut the peoject we talked about,",
                     surrounding_context="Hey Dana,",
+                    review_id=2,
+                    review_text="Abiut the peoject we talked about,",
+                    review_text_hash="review-hash-2",
                 )
 
         targets = [suggestion["target_text"] for suggestion in result["suggestions"]]
-        outer_call = next(call for call in trace_calls if call["name"] == "communication_agent.inline_preview")
-        final_call = next(call for call in trace_calls if call["name"] == "communication_agent.inline_preview.node.final_response")
+        outer_call = next(call for call in trace_calls if call["name"] == "inline_preview")
+        final_call = next(call for call in trace_calls if call["name"] == "inline/final")
+        suggestion_calls = [call for call in trace_calls if call["name"] == "inline/suggestion"]
 
-        self.assertIn("our project", targets)
+        self.assertIn("the peoject", targets)
         self.assertIn("content", outer_call["inputs"])
-        self.assertEqual(outer_call["inputs"]["content"]["changed_text"], "Regarding our project, how can we improve the onboarding reliability?")
+        self.assertEqual(outer_call["inputs"]["review_id"], 2)
+        self.assertEqual(outer_call["inputs"]["content"]["review_text"], "Abiut the peoject we talked about,")
         self.assertIn("content", final_call["output"])
-        self.assertEqual(final_call["output"]["content"]["suggestions"][0]["suggested_replacement"], "Enterprise Onboarding Reliability")
+        self.assertTrue(any(
+            suggestion["suggested_replacement"] == "Enterprise Onboarding Reliability"
+            for suggestion in final_call["output"]["content"]["suggestions"]
+        ))
+        self.assertEqual(len(suggestion_calls), len(result["suggestions"]))
+        self.assertTrue(all(call["inputs"]["review_id"] == 2 for call in suggestion_calls))
+        self.assertTrue(any(
+            call["inputs"]["content"]["target_text"] == "the peoject"
+            and call["inputs"]["content"]["suggested_replacement"] == "Enterprise Onboarding Reliability"
+            and call["inputs"]["suggestion_source"] == "context_rules"
+            for call in suggestion_calls
+        ))
 
     def test_inline_preview_validator_skips_malformed_suggestion_items(self):
         result = validate_inline_preview_response(
@@ -765,6 +787,56 @@ class InlinePreviewWeaveTests(TestCase):
         self.assertIn("Let's do it good and great and shiny!", targets)
         self.assertIn("go fetch the data right now?", targets)
 
+    def test_deterministic_inline_suggestions_include_local_typo_corrections(self):
+        result = deterministic_inline_suggestions(
+            "Regarding the peoject we talkeda bout with the woker and gorgoeus typo."
+        )
+        replacements = {
+            suggestion["target_text"]: suggestion["suggested_replacement"]
+            for suggestion in result
+        }
+
+        self.assertEqual(replacements["peoject"], "project")
+        self.assertEqual(replacements["talkeda"], "talked about")
+        self.assertEqual(replacements["woker"], "worker")
+        self.assertEqual(replacements["gorgoeus"], "gorgeous")
+
+    def test_deterministic_inline_suggestions_catch_objectifying_workplace_comments(self):
+        result = deterministic_inline_suggestions(
+            "How to make it good you beautiful? "
+            "Moreover let's make you gorgues again! "
+            "Tight jeans beautiful right? "
+            "Need to find beautiful women!"
+        )
+        targets = [suggestion["target_text"] for suggestion in result]
+
+        self.assertIn("How to make it good you beautiful?", targets)
+        self.assertIn("Moreover let's make you gorgues again!", targets)
+        self.assertIn("Tight jeans beautiful right?", targets)
+        self.assertIn("Need to find beautiful women!", targets)
+
+    def test_deterministic_inline_suggestions_catch_objectifying_comments_with_typos(self):
+        result = deterministic_inline_suggestions(
+            "Moreover how to find beautoiful women? "
+            "You gorgoeus how to be good like you? "
+            "Hot wife is goregoes today let's hook up."
+        )
+        targets = [suggestion["target_text"] for suggestion in result]
+
+        self.assertIn("Moreover how to find beautoiful women?", targets)
+        self.assertIn("You gorgoeus how to be good like you?", targets)
+        self.assertIn("Hot wife is goregoes today let's hook up.", targets)
+
+    def test_deterministic_inline_suggestions_catch_unprofessional_following_sentences(self):
+        result = deterministic_inline_suggestions(
+            "Moreover how to solve it you unctuous yet? "
+            "Need to send you good photos of me."
+        )
+        targets = [suggestion["target_text"] for suggestion in result]
+
+        self.assertIn("Moreover how to solve it you unctuous yet?", targets)
+        self.assertIn("Need to send you good photos of me.", targets)
+
     def test_inline_preview_adds_deterministic_suggestions_when_llm_misses_obvious_phrases(self):
         previewer = InlineSuggestionPreviewer(llm_client=FakeEmptyInlineLLMClient())
 
@@ -789,6 +861,24 @@ class InlinePreviewWeaveTests(TestCase):
         targets = [suggestion["target_text"] for suggestion in result["suggestions"]]
         self.assertIn("Let's do it good and great and shiny!", targets)
         self.assertIn("go fetch the data right now?", targets)
+
+    def test_inline_preview_adds_deterministic_suggestion_for_objectifying_comment_when_llm_misses_it(self):
+        previewer = InlineSuggestionPreviewer(llm_client=FakeEmptyInlineLLMClient())
+
+        with patch.dict(os.environ, {"WEAVE_TRACING": "false"}):
+            clear_weave_cache()
+            result = previewer.preview(
+                sender=self.sender,
+                receiver=self.receiver,
+                channel=Message.Channel.OUTLOOK,
+                intent=Message.Intent.REQUEST,
+                full_draft="Hey Dana, Need to find beautiful women!",
+                changed_text="Need to find beautiful women!",
+                surrounding_context="Hey Dana, Need to find beautiful women!",
+            )
+
+        targets = [suggestion["target_text"] for suggestion in result["suggestions"]]
+        self.assertIn("Need to find beautiful women!", targets)
 
 
 class OrganizationContextSeedImportTests(TestCase):

@@ -215,6 +215,9 @@ def api_inline_suggestions_preview(request: HttpRequest, org_id: int):
     changed_text = (payload.get("changed_text") or "").strip()
     surrounding_context = payload.get("surrounding_context") or ""
     prior_review_context = payload.get("prior_review_context") or []
+    review_id = payload.get("review_id")
+    review_text = payload.get("review_text") or changed_text
+    review_text_hash = payload.get("review_text_hash") or ""
 
     if not all([sender_id, receiver_id, channel, intent, full_draft, changed_text]):
         return JsonResponse({
@@ -234,6 +237,9 @@ def api_inline_suggestions_preview(request: HttpRequest, org_id: int):
             changed_text=changed_text,
             surrounding_context=surrounding_context,
             prior_review_context=prior_review_context,
+            review_id=review_id,
+            review_text=review_text,
+            review_text_hash=review_text_hash,
         )
     except (NebiusConfigurationError, NebiusRuntimeError, LLMResponseValidationError, ValueError) as exc:
         return JsonResponse({"error": f"Inline preview failed: {exc}"}, status=400)
@@ -252,6 +258,9 @@ def api_gmail_inline_suggestions_preview(request: HttpRequest):
     changed_text = (payload.get("changed_text") or "").strip()
     surrounding_context = payload.get("surrounding_context") or ""
     prior_review_context = payload.get("prior_review_context") or []
+    review_id = payload.get("review_id")
+    review_text = payload.get("review_text") or changed_text
+    review_text_hash = payload.get("review_text_hash") or ""
     intent = payload.get("intent")
 
     if not all([full_draft, changed_text, intent]):
@@ -268,6 +277,9 @@ def api_gmail_inline_suggestions_preview(request: HttpRequest):
             changed_text=changed_text,
             surrounding_context=surrounding_context,
             prior_review_context=prior_review_context,
+            review_id=review_id,
+            review_text=review_text,
+            review_text_hash=review_text_hash,
         )
     except Organization.DoesNotExist:
         return JsonResponse({"error": "Selected organization was not found."}, status=404)
@@ -302,6 +314,9 @@ def api_outlook_inline_suggestions_preview(request: HttpRequest):
     changed_text = (payload.get("changed_text") or "").strip()
     surrounding_context = payload.get("surrounding_context") or ""
     prior_review_context = payload.get("prior_review_context") or []
+    review_id = payload.get("review_id")
+    review_text = payload.get("review_text") or changed_text
+    review_text_hash = payload.get("review_text_hash") or ""
     intent = payload.get("intent")
 
     if not all([full_draft, changed_text, intent]):
@@ -318,6 +333,9 @@ def api_outlook_inline_suggestions_preview(request: HttpRequest):
             changed_text=changed_text,
             surrounding_context=surrounding_context,
             prior_review_context=prior_review_context,
+            review_id=review_id,
+            review_text=review_text,
+            review_text_hash=review_text_hash,
         )
     except OutlookOrganizationNotFound:
         return JsonResponse({"error": "organization_id was not found"}, status=404)

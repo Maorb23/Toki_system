@@ -396,6 +396,9 @@ curl -H "X-Gmail-Integration-Token: $COMMS_GMAIL_INTEGRATION_TOKEN" \
 	http://127.0.0.1:8000/api/v1/integrations/gmail/analyze-draft/
 ```
 
+Initiating Outlook Example:
+npx http-server docs/outlook_office_addin_demo -S   -C 'C:\Users\maorb\.office-addin-dev-certs\localhost.crt'   -K 'C:\Users\maorb\.office-addin-dev-certs\localhost.key'   -p 3000   -c-1
+
 Outlook Office Add-in demo endpoints use `X-Outlook-Integration-Token`:
 
 ```bash
